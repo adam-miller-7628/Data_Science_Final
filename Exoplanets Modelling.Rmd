@@ -11,6 +11,7 @@ library(rpart.plot)
 
 
 ```{r}
+#read data
 originalKepplerData = read.csv("cumulative.csv") #read data
 #View(head(originalKepplerData))
 summary(originalKepplerData)
