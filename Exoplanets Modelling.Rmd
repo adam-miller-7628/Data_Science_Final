@@ -6,10 +6,10 @@ output: html_notebook
 #Load libraries
 library(rpart)
 library(rpart.plot)
-library("randomForest")
-library("class")
-library("e1071")
-library("FNN")
+library(randomForest)
+library(class)
+library(e1071)
+library(FNN)
 ```
 
 
@@ -69,10 +69,34 @@ for (fold in 1:5) {
   decTreePredictions
   decTreeModel_error = sum(decTreePredictions != testingSet$koi_disposition)
   
-  decTreeModel_error/sizeTestSet
-  
+  misclassificationRateDecTree = decTreeModel_error/sizeTestSet
+  misclassificationRateDecTree
+    
+  #Random Forest Model (Error in this model)
+  #RandForestModel=randomForest(koi_disposition~., data=trainingSet,importance=TRUE, ntree=100)
+  #summary(trainingSet)
+  #class(RandForestModel)
+  #predictionsRandForest=predict(RandForestModel,testingSet)
+  #errorRandForest = sum(predictionsRandForest!=testingSet$koi_disposition)
+  #misclassificationRateRandomForest=errorRandForest/sizeTestSet
+  #misclassificationRateRandomForest  
 
+  #SVM Model
+  svmModel=svm(koi_disposition~.,data=trainingSet,kernel="linear")
+  predictedlabelsSVM=predict(svmModel,testingSet)
+  errorSVM=sum(predictedlabelsSVM!=testingSet$koi_disposition)
+  misclassification_rateSVM=errorSVM/sizeTestSet
+  print(misclassification_rateSVM)
   
+  #Logistic Regression Model
+  LogisticReg = glm(koi_disposition ~ ., data = trainingSet, family = binomial(logit))
+  predicions = predict(LogisticReg, testingSet, type = "response")
+  predictedLabels = rep(0, sizeTestSet) 
+  predictedLabels = ifelse(predicions > 0.5, 'FALSE POSITIVE', 'CONFIRMED') 
+  error = sum(predictedLabels != testingSet$koi_disposition)
+  misclassificationRateLR = error / sizeTestSet
+  print(misclassificationRateLR)
+
 }
 ```
 #Normalized
