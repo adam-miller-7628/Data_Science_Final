@@ -28,7 +28,7 @@ summary(remove_NAs)
 identifiers_removed = subset(remove_NAs, select = -c(rowid, kepid, kepoi_name, kepler_name, koi_pdisposition, koi_score))
 #get rid of unique identifiers, as well as ones that can only be calculated once you know the outcome, like Koi_Pdisposition and koi_score
 #Also needs to remove flags, these can only be known after status is confirmed
-identifiers_removed = subset(identifiers_removed, select = -c(koi_fpflag_ss, koi_fpflag_ec, koi_fpflag_co, koi_fpflag_nt))
+identifiers_removed = subset(identifiers_removed, select = -c(koi_fpflag_ss, koi_fpflag_ec, koi_fpflag_co, koi_fpflag_nt, Koi_tce_plnt_num, Koi_tce_delivname))
 
 
 #separate into labeled and unlabeled data
@@ -65,6 +65,20 @@ for (fold in 1:5) {
   decTreeModel_error/sizeTestSet
   
   
+}
+```
+#Normalized
+```{r}
+head(labeled_final)
+for (fold in 1:5) {
+  set.seed(fold)
+  scaled_data = scaled(labeled_final[])
+  num_samples = dim(labeled_final)[1]
+  sampling.rate = 0.8
+  training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+  trainingSet = subset(labeled_final[training,])
+  testing = setdiff(1:num_samples, training)
+  testingSet = subset(labeled_final[testing, ])
 }
 ```
 
