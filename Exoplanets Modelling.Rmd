@@ -70,15 +70,54 @@ for (fold in 1:5) {
 #Normalized
 ```{r}
 head(labeled_final)
+dim(labeled_final)
 for (fold in 1:5) {
   set.seed(fold)
-  scaled_data = scaled(labeled_final[])
-  num_samples = dim(labeled_final)[1]
-  sampling.rate = 0.8
+  scaled_data = data.frame(scale(labeled_final[,2:36]))
+  scaled_data$koi_disposition = labeled_final$koi_disposition
+  summary(scaled_data)
+  num_samples = dim(scaled_data)[1]
+  sampling.rate = 0.2
   training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-  trainingSet = subset(labeled_final[training,])
+  trainingSet.norm = subset(scaled_data[training,])
   testing = setdiff(1:num_samples, training)
-  testingSet = subset(labeled_final[testing, ])
+  testingSet.norm = subset(scaled_data[testing, ])
+  
+  koiDP.name = "koi_disposition"
+  variable.names = rep(0,numCols)
+  
+  
+  numCols = dim(testingSet.norm)[2]
+  variable.names = colnames(testingSet.norm)[1:numCols-1]
+ 
+  variable.names
+  for (i in 1:length(variable.names)){
+    error = grepl( "_err", variable.names[i], fixed = TRUE)
+    if (error){
+      variable.names[i] = NA
+    }
+    
+  }
+  
+  variable.names = na.omit(variable.names)
+  variable.names = variable.names[1:15]
+  variable.names
+  
+  library(formulaic)
+  nn.form <-
+  create.formula(outcome.name = koiDP.name,
+                 input.names = variable.names)
+  nn.form
+  library(neuralnet)
+  nnModel = neuralnet(
+    nn.form,
+    data = trainingSet.norm,
+    hidden = c(4, 2),
+    linear.output = FALSE
+  )
+ 
+ 
+ 
 }
 ```
 
