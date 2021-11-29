@@ -6,6 +6,10 @@ output: html_notebook
 #Load libraries
 library(rpart)
 library(rpart.plot)
+library("randomForest")
+library("class")
+library("e1071")
+library("FNN")
 ```
 
 
@@ -65,7 +69,13 @@ for (fold in 1:5) {
   
   decTreeModel_error/sizeTestSet
   
+
   
 }
 ```
 
+```{r}
+
+```
+ 
+ 
