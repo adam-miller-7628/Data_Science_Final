@@ -28,7 +28,7 @@ remove_NAs = na.exclude(remove_KOI_tech_factoered) #remove NAs
 summary(remove_NAs)
 identifiers_removed = subset(remove_NAs, select = -c(rowid, kepid, kepoi_name, kepler_name, koi_pdisposition, koi_score))
 #get rid of unique identifiers, as well as ones that can only be calculated once you know the outcome, like Koi_Pdisposition and koi_score
-#Also needs to remove flags, these can only be known after status is confirmed
+#Also needs to remove flags, these can only be known after status is confirmed`
 identifiers_removed = subset(identifiers_removed, select = -c(koi_fpflag_ss, koi_fpflag_ec, koi_fpflag_co, koi_fpflag_nt))
 
 
