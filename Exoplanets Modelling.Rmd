@@ -114,7 +114,7 @@ AvgErrorGLM = mean(GLM_error)
 
 
 
-#Normalized
+Neural Network:
 ```{r}
 head(labeled_final)
 dim(labeled_final)
@@ -123,15 +123,16 @@ dim(labeled_final)
 #Neural network, smaller training set due to computational limits
 set.seed(123)
 scaled_data = data.frame(scale(labeled_final[, 2:36]))
-scaled_data$koi_disposition = labeled_final$koi_disposition
+scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 1,0)
 summary(scaled_data)
+head(scaled_data)
 num_samples = dim(scaled_data)[1]
 sampling.rate = 0.2
 training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
 trainingSet.norm = subset(scaled_data[training, ])
 testing = setdiff(1:num_samples, training)
 testingSet.norm = subset(scaled_data[testing,])
-
+sizeTestSet = dim(testingSet.norm)[1]
 koiDP.name = "koi_disposition"
 variable.names = rep(0, numCols)
 
@@ -158,20 +159,37 @@ nn.form <-
                  input.names = variable.names)
 nn.form
 library(neuralnet)
-nnModel = neuralnet(
+nnModel2 = neuralnet(
   nn.form,
   data = trainingSet.norm,
-  hidden = c(5, 1),
-  #4,2 does not converge
-  linear.output = FALSE
+  hidden = 2,
+  #4,2 does not converge #5,1 does not converge, #6 did not converge, 3,1 logstics did not converge
+  #2 logsitic converges!!!!
+  linear.output = FALSE,
+  act.fct = "logistic"
 )
 
+plot(nnModel2)
 
+nnModel2$result.matrix
+plot(nnModel2)
 
+predictedLabels = compute(nnModel2, testingSet.norm[,variable.names])
+#predictedLabels$net.result
+
+results = data.frame(actual = testingSet.norm$koi_disposition, prediction = predictedLabels$net.result)
+error = sum(results$actual != round(results$prediction))
+NeuralNetMisClassRate = error/sizeTestSet
 
 ```
-
+KNN:
 ```{r}
+
+for (fold in 1:5){
+  set.seed(fold)
+  
+}
+
 
 ```
  
