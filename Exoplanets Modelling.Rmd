@@ -18,18 +18,17 @@ library(FNN)
 #read data
 originalKepplerData = read.csv("cumulative.csv") #read data
 #View(head(originalKepplerData))
-summary(originalKepplerData)
+
 factored_keppler_data = originalKepplerData
 factored_keppler_data$koi_disposition = factor(originalKepplerData$koi_disposition) #factor character data
-originalKepplerData$koip_disposition
 factored_keppler_data$koi_pdisposition = factor(originalKepplerData$koi_pdisposition)
 head(factored_keppler_data)
 remove_KOI_tech_factoered = subset(factored_keppler_data, select = -c(koi_teq_err1)) #remove all-NA columns
 remove_KOI_tech_factoered = subset(remove_KOI_tech_factoered, select = -c(koi_teq_err2))
-summary(remove_KOI_tech_factoered)
+
 #View(remove_KOI_tech_factoered)
 remove_NAs = na.exclude(remove_KOI_tech_factoered) #remove NAs
-summary(remove_NAs)
+
 identifiers_removed = subset(remove_NAs, select = -c(rowid, kepid, kepoi_name, kepler_name, koi_pdisposition, koi_score))
 #get rid of unique identifiers, as well as ones that can only be calculated once you know the outcome, like Koi_Pdisposition and koi_score
 
@@ -43,14 +42,16 @@ candidates_final = identifiers_removed[identifiers_removed$koi_disposition ==
                                          "CANDIDATE", ] #separate out just the candidates
 labeled_final = identifiers_removed[identifiers_removed$koi_disposition !=
                                       "CANDIDATE", ]
-summary(candidates_final)
-summary(labeled_final)
 
 head(candidates_final)
 summary(candidates_final)
 ```
 First, do all models that don't require normalization
 ```{r}
+decTree_Error = rep(0,5)
+RF_error = rep(0,5)
+SVM_error = rep(0,5)
+GLM_error = rep(0,5)
 for (fold in 1:5) {
   set.seed(fold)
   
@@ -70,7 +71,9 @@ for (fold in 1:5) {
   decTreeModel_error = sum(decTreePredictions != testingSet$koi_disposition)
   
   misclassificationRateDecTree = decTreeModel_error/sizeTestSet
-  misclassificationRateDecTree
+  #new do pruning, etc.
+  
+  decTree_Error[fold] = misclassificationRateDecTree
     
   #Random Forest Model (Error in this model)
   #RandForestModel=randomForest(koi_disposition~., data=trainingSet,importance=TRUE, ntree=100)
@@ -86,7 +89,8 @@ for (fold in 1:5) {
   predictedlabelsSVM=predict(svmModel,testingSet)
   errorSVM=sum(predictedlabelsSVM!=testingSet$koi_disposition)
   misclassification_rateSVM=errorSVM/sizeTestSet
-  print(misclassification_rateSVM)
+  SVM_error[fold] = misclassification_rateSVM
+
   
   #Logistic Regression Model
   LogisticReg = glm(koi_disposition ~ ., data = trainingSet, family = binomial(logit))
@@ -95,62 +99,76 @@ for (fold in 1:5) {
   predictedLabels = ifelse(predicions > 0.5, 'FALSE POSITIVE', 'CONFIRMED') 
   error = sum(predictedLabels != testingSet$koi_disposition)
   misclassificationRateLR = error / sizeTestSet
-  print(misclassificationRateLR)
+  GLM_error[fold] = misclassificationRateLR
+ 
 
 }
 ```
+Calculate Average Errors
+```{r}
+AvgErrorDT = mean(decTree_Error)
+AvgErrorRF = mean(RF_error)
+AvgErrorSVM = mean(SVM_error)
+AvgErrorGLM = mean(GLM_error)
+```
+
+
+
 #Normalized
 ```{r}
 head(labeled_final)
 dim(labeled_final)
-for (fold in 1:5) {
-  set.seed(fold)
-  scaled_data = data.frame(scale(labeled_final[,2:36]))
-  scaled_data$koi_disposition = labeled_final$koi_disposition
-  summary(scaled_data)
-  num_samples = dim(scaled_data)[1]
-  sampling.rate = 0.2
-  training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-  trainingSet.norm = subset(scaled_data[training,])
-  testing = setdiff(1:num_samples, training)
-  testingSet.norm = subset(scaled_data[testing, ])
-  
-  koiDP.name = "koi_disposition"
-  variable.names = rep(0,numCols)
-  
-  
-  numCols = dim(testingSet.norm)[2]
-  variable.names = colnames(testingSet.norm)[1:numCols-1]
- 
-  variable.names
-  for (i in 1:length(variable.names)){
-    error = grepl( "_err", variable.names[i], fixed = TRUE)
-    if (error){
-      variable.names[i] = NA
-    }
-    
+
+
+#Neural network, smaller training set due to computational limits
+set.seed(123)
+scaled_data = data.frame(scale(labeled_final[, 2:36]))
+scaled_data$koi_disposition = labeled_final$koi_disposition
+summary(scaled_data)
+num_samples = dim(scaled_data)[1]
+sampling.rate = 0.2
+training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet.norm = subset(scaled_data[training, ])
+testing = setdiff(1:num_samples, training)
+testingSet.norm = subset(scaled_data[testing,])
+
+koiDP.name = "koi_disposition"
+variable.names = rep(0, numCols)
+
+
+numCols = dim(testingSet.norm)[2]
+variable.names = colnames(testingSet.norm)[1:numCols - 1]
+
+variable.names
+for (i in 1:length(variable.names)) {
+  error = grepl("_err", variable.names[i], fixed = TRUE)
+  if (error) {
+    variable.names[i] = NA
   }
   
-  variable.names = na.omit(variable.names)
-  variable.names = variable.names[1:15]
-  variable.names
-  
-  library(formulaic)
-  nn.form <-
+}
+
+variable.names = na.omit(variable.names)
+variable.names = variable.names[1:15]
+variable.names
+
+library(formulaic)
+nn.form <-
   create.formula(outcome.name = koiDP.name,
                  input.names = variable.names)
-  nn.form
-  library(neuralnet)
-  nnModel = neuralnet(
-    nn.form,
-    data = trainingSet.norm,
-    hidden = c(4, 2),
-    linear.output = FALSE
-  )
- 
- 
- 
-}
+nn.form
+library(neuralnet)
+nnModel = neuralnet(
+  nn.form,
+  data = trainingSet.norm,
+  hidden = c(5, 1),
+  #4,2 does not converge
+  linear.output = FALSE
+)
+
+
+
+
 ```
 
 ```{r}
