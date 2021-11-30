@@ -192,16 +192,13 @@ nnModel2 = neuralnet(
   linear.output = FALSE,
   act.fct = "logistic"
 )
-testingSet.norm[,variable.names]
-trainingSet.norm[,variable.names]
-plot(nnModel2)
+
 predictedLabels = compute(nnModel2, testingSet.norm[,variable.names])
 #predictedLabels$net.result
 
 results = data.frame(actual = testingSet.norm$koi_disposition, prediction = predictedLabels$net.result)
 error = sum(results$actual != round(results$prediction))
 NeuralNetMisClassRate = error/sizeTestSet
-NeuralNetMisClassRate
 ```
 KNN:
 ```{r}
@@ -243,10 +240,37 @@ print(order(k_errors))
 #The lowest average error (this run) is from the model with k = 4. 
 AvgError_best_knn = k_errors[order(k_errors)[1]]
 ```
+```{r}
+library("factoextra")
+
+  scaled_data = data.frame(scale(labeled_final[, 2:36]))
+  scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 2, 1)
+  summary(scaled_data)
+  head(scaled_data)
+  num_samples = dim(scaled_data)[1]
+  features = subset(scaled_data, select = c(-koi_disposition))
+  summary(features)
+  head(scaled_data)
+  kclustering = kmeans(features, centers = 2, nstart = 25)
+  
+  fviz_cluster(kclustering, data = features)
+  head(kclustering$cluster)
+  
+  error = sum(scaled_data$koi_disposition != kclustering$cluster)
+  error
+  misclassification_rate = error / dim(scaled_data)[1]
+  AvgErrorClustering = misclassification_rate
+
+  
+
+
+
+```
 
 ```{r}
-error_output = data.frame("Model"= c("Decision Tree","GLM","Random Forest","SVM","Neural Net","KNN"), "Error" = c(AvgErrorDT,AvgErrorGLM,AvgErrorRF,AvgErrorSVM,NeuralNetMisClassRate,AvgError_best_knn))
+error_output = data.frame("Model"= c("Decision Tree","GLM","Random Forest","SVM","Neural Net","KNN","Clustering"), "Misclassification Rate" = c(AvgErrorDT,AvgErrorGLM,AvgErrorRF,AvgErrorSVM,NeuralNetMisClassRate,AvgError_best_knn,AvgErrorClustering))
 print(error_output)
 ```
+
  
  
