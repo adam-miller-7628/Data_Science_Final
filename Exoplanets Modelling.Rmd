@@ -10,6 +10,7 @@ library(randomForest)
 library(class)
 library(e1071)
 library(FNN)
+library(factoextra)
 ```
 
 
@@ -119,6 +120,7 @@ for (fold in 1:5) {
   LogisticReg = glm(koi_disposition ~ .,
                     data = trainingSet,
                     family = binomial(logit))
+  
   predicions = predict(LogisticReg, testingSet, type = "response")
   predictedLabels = rep(0, sizeTestSet)
   predictedLabels = ifelse(predicions > 0.5, 'FALSE POSITIVE', 'CONFIRMED')
@@ -126,7 +128,27 @@ for (fold in 1:5) {
   misclassificationRateLR = error / sizeTestSet
   GLM_error[fold] = misclassificationRateLR
   
-
+  library(xgboost)
+  #XGBoost
+  xgTrain = data.matrix(trainingSet)
+  xgTrain[, 1] = ifelse(xgTrain[, 1] == 2, 1, 0)
+  
+  
+  xgBoostModel = xgboost(
+    data = xgTrain[, 2:36],
+    label = xgTrain[, 1],
+    max.depth = 3,
+    eta = 1,
+    nrounds = 2,
+    nthread = 2,
+    objective = "binary:logistic"
+  )
+  xgTest = data.matrix(testingSet)
+  xgTest[, 1] = ifelse(xgTest[, 1] == 2, 1, 0)
+  BoostPredictions = predict(xgBoostModel, data.matrix(testingSet)[, 2:36])
+  BoostError = sum(round(BoostPredictions) != testingSet$koi_disposition)
+  misclassificationRateBoost = error / sizeTestSet
+  
 }
 ```
 Calculate Average Errors
@@ -183,7 +205,7 @@ nn.form <-
                  input.names = variable.names)
 nn.form
 library(neuralnet)
-nnModel2 = neuralnet(
+nnModel1 = neuralnet(
   nn.form,
   data = trainingSet.norm,
   hidden = 2,
@@ -193,7 +215,7 @@ nnModel2 = neuralnet(
   act.fct = "logistic"
 )
 
-predictedLabels = compute(nnModel2, testingSet.norm[,variable.names])
+predictedLabels = compute(nnModel1, testingSet.norm[,variable.names])
 #predictedLabels$net.result
 
 results = data.frame(actual = testingSet.norm$koi_disposition, prediction = predictedLabels$net.result)
@@ -269,10 +291,160 @@ AvgErrorClustering = misclassification_rate
 
 ```
 
+
 ```{r}
-error_output = data.frame("Model"= c("Decision Tree","GLM","Random Forest","SVM","Neural Net","KNN","Clustering"), "Misclassification Rate" = c(AvgErrorDT,AvgErrorGLM,AvgErrorRF,AvgErrorSVM,NeuralNetMisClassRate,AvgError_best_knn,AvgErrorClustering))
+res.pca.exoplanets = prcomp(identifiers_removed[2:36], center = TRUE, scale = TRUE)
+
+summary(res.pca.exoplanets)
+PoV <- res.pca.exoplanets$sdev^2/sum(res.pca.exoplanets$sdev^2) #get proportions of variance
+numPcas = 13
+sum(PoV[1:numPcas]) #This gives us 83% explanation of variance. This is the number of variable in the original neural network, so I am using it here too to hopefully get a better NN with the same number of variables. 
+newDataSet = data.frame(res.pca.exoplanets$x[,1:numPcas])
+
+newDataSet$label= identifiers_removed$koi_disposition
+
+#fviz_pca_biplot(res.pca.exoplanets, col.ind = "cos2", repel = TRUE)
+fviz_pca_var(res.pca.exoplanets, col.var = "contrib")
+
+candidates_PCA = newDataSet[identifiers_removed$koi_disposition ==
+                                         "CANDIDATE", ] #separate out just the candidates
+labeled_PCA = newDataSet[identifiers_removed$koi_disposition !=
+                                      "CANDIDATE", ]
+labeled_PCA = droplevels(labeled_PCA)
+candidates_PCA = droplevels(candidates_PCA)
+
+
+```
+```{r}
+#Redoing Neural Network
+set.seed(123)
+NN_labeled_PCA = labeled_PCA[, 1:numPcas]
+NN_labeled_PCA
+NN_labeled_PCA$koi_disposition = ifelse(labeled_PCA$label == "CONFIRMED", 1,0)
+summary(scaled_data)
+head(scaled_data)
+num_samples = dim(scaled_data)[1]
+sampling.rate = 0.8
+training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet.norm.PCA = subset(NN_labeled_PCA[training, ])
+testing = setdiff(1:num_samples, training)
+testingSet.norm.PCA = subset(NN_labeled_PCA[testing,])
+sizeTestSet = dim(testingSet.norm)[1]
+label.name = "label"
+variable.names = rep(0, numPcas)
+
+
+numCols = dim(testingSet.norm.PCA)[2]
+variable.names = colnames(testingSet.norm.PCA)[1:numCols - 1]
+
+variable.names
+
+library(formulaic)
+nn.form <-
+  create.formula(outcome.name = koiDP.name,
+                 input.names = variable.names)
+nn.form
+library(neuralnet)
+nnModel2 = neuralnet(
+  nn.form,
+  data = trainingSet.norm.PCA,
+  hidden = 2,
+  #4,2 does not converge #5,1 does not converge, #6 did not converge, 3,1 logstics did not converge
+  #2 logsitic converges!!!!
+  linear.output = FALSE,
+  act.fct = "logistic"
+)
+
+plot(nnModel2)
+predictedLabels = compute(nnModel2, testingSet.norm.PCA[,variable.names])
+#predictedLabels$net.result
+
+results = data.frame(actual = testingSet.norm.PCA$koi_disposition, prediction = predictedLabels$net.result)
+error = sum(results$actual != round(results$prediction))
+PCA_13_v_NeuralNetMisClassRate = error/sizeTestSet
+```
+We get a slightly better misclassification rate from the PCA version of NN using 13 variables. 
+
+```{r}
+#Last Neural Network, PCA, with 95% of variation explained
+numVars = (dim((labeled_final))[2])
+for (i in 1:(numVars)){
+  if (sum(PoV[1:i])>=.95){
+    numPcas = i
+    break
+    
+  }
+}
+
+sum(PoV[1:numPcas]) #This gives us 83% explanation of variance. This is the number of variable in the original neural network, so I am using it here too to hopefully get a better NN with the same number of variables. 
+newDataSet = data.frame(res.pca.exoplanets$x[,1:numPcas])
+
+newDataSet$label= identifiers_removed$koi_disposition
+
+candidates_PCA = newDataSet[identifiers_removed$koi_disposition ==
+                                         "CANDIDATE", ] #separate out just the candidates
+labeled_PCA = newDataSet[identifiers_removed$koi_disposition !=
+                                      "CANDIDATE", ]
+labeled_PCA = droplevels(labeled_PCA)
+candidates_PCA = droplevels(candidates_PCA)
+```
+
+```{r}
+set.seed(123)
+NN_labeled_PCA = labeled_PCA[, 1:numPcas]
+NN_labeled_PCA
+NN_labeled_PCA$koi_disposition = ifelse(labeled_PCA$label == "CONFIRMED", 1,0)
+summary(scaled_data)
+head(scaled_data)
+num_samples = dim(scaled_data)[1]
+sampling.rate = 0.8
+training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet.norm.PCA = subset(NN_labeled_PCA[training, ])
+testing = setdiff(1:num_samples, training)
+testingSet.norm.PCA = subset(NN_labeled_PCA[testing,])
+sizeTestSet = dim(testingSet.norm)[1]
+label.name = "label"
+variable.names = rep(0, numPcas)
+
+
+numCols = dim(testingSet.norm.PCA)[2]
+variable.names = colnames(testingSet.norm.PCA)[1:numCols - 1]
+
+variable.names
+
+library(formulaic)
+nn.form <-
+  create.formula(outcome.name = koiDP.name,
+                 input.names = variable.names)
+nn.form
+library(neuralnet)
+nnModel3 = neuralnet(
+  nn.form,
+  data = trainingSet.norm.PCA,
+  hidden = 2,
+  #4,2 does not converge #5,1 does not converge, #6 did not converge, 3,1 logstics did not converge
+  #2 logsitic converges!!!!
+  linear.output = FALSE,
+  act.fct = "logistic"
+)
+
+plot(nnModel3)
+predictedLabels = compute(nnModel3, testingSet.norm.PCA[,variable.names])
+#predictedLabels$net.result
+
+results = data.frame(actual = testingSet.norm.PCA$koi_disposition, prediction = predictedLabels$net.result)
+error = sum(results$actual != round(results$prediction))
+PCA_20_v_NeuralNetMisClassRate = error/sizeTestSet
+```
+
+
+
+```{r}
+error_output = data.frame("Model"= c("Decision Tree","GLM","Random Forest","SVM","Neural Net","KNN","Clustering", "PCA 13 Var NN", "PCA 20 Var NN"), "Misclassification Rate" = c(AvgErrorDT,AvgErrorGLM,AvgErrorRF,AvgErrorSVM,NeuralNetMisClassRate,AvgError_best_knn,AvgErrorClustering, PCA_13_v_NeuralNetMisClassRate,PCA_20_v_NeuralNetMisClassRate))
 print(error_output)
 ```
+
+
 Best model is random forest. Remake this model with full dataset.
 ```{r}
   RandForestModel = randomForest(koi_disposition ~ ., data = labeled_final)
