@@ -240,28 +240,30 @@ print(order(k_errors))
 #The lowest average error (this run) is from the model with k = 4. 
 AvgError_best_knn = k_errors[order(k_errors)[1]]
 ```
+
+Clustering:
 ```{r}
 library("factoextra")
 
-  scaled_data = data.frame(scale(labeled_final[, 2:36]))
-  scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 2, 1)
-  summary(scaled_data)
-  head(scaled_data)
-  num_samples = dim(scaled_data)[1]
-  features = subset(scaled_data, select = c(-koi_disposition))
-  summary(features)
-  head(scaled_data)
-  kclustering = kmeans(features, centers = 2, nstart = 25)
-  
-  fviz_cluster(kclustering, data = features)
-  head(kclustering$cluster)
-  
-  error = sum(scaled_data$koi_disposition != kclustering$cluster)
-  error
-  misclassification_rate = error / dim(scaled_data)[1]
-  AvgErrorClustering = misclassification_rate
+scaled_data = data.frame(scale(labeled_final[, 2:36]))
+scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 2, 1)
+summary(scaled_data)
+head(scaled_data)
+num_samples = dim(scaled_data)[1]
+features = subset(scaled_data, select = c(-koi_disposition))
+summary(features)
+head(scaled_data)
+kclustering = kmeans(features, centers = 2, nstart = 25)
 
-  
+fviz_cluster(kclustering, data = features)
+head(kclustering$cluster)
+
+error = sum(scaled_data$koi_disposition != kclustering$cluster)
+error
+misclassification_rate = error / dim(scaled_data)[1]
+AvgErrorClustering = misclassification_rate
+
+
 
 
 
@@ -270,6 +272,19 @@ library("factoextra")
 ```{r}
 error_output = data.frame("Model"= c("Decision Tree","GLM","Random Forest","SVM","Neural Net","KNN","Clustering"), "Misclassification Rate" = c(AvgErrorDT,AvgErrorGLM,AvgErrorRF,AvgErrorSVM,NeuralNetMisClassRate,AvgError_best_knn,AvgErrorClustering))
 print(error_output)
+```
+Best model is random forest. Remake this model with full dataset.
+```{r}
+  RandForestModel = randomForest(koi_disposition ~ ., data = labeled_final)
+  
+  
+```
+Predict labels of candidates dataset, and write it to file
+```{r}
+predictedLabels = predict(RandForestModel, candidates_final)
+  candidates_final$koi_disposition = predictedLabels
+  head(candidates_final)
+  write.csv(candidates_final,"labeledCandidates.csv")
 ```
 
  
