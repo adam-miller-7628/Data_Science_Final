@@ -42,65 +42,90 @@ candidates_final = identifiers_removed[identifiers_removed$koi_disposition ==
                                          "CANDIDATE", ] #separate out just the candidates
 labeled_final = identifiers_removed[identifiers_removed$koi_disposition !=
                                       "CANDIDATE", ]
-
-head(candidates_final)
+labeled_final = droplevels(labeled_final)
+candidates_final = droplevels(candidates_final)
+summary(labeled_final)
 summary(candidates_final)
 ```
 First, do all models that don't require normalization
 ```{r}
-decTree_Error = rep(0,5)
-RF_error = rep(0,5)
-SVM_error = rep(0,5)
-GLM_error = rep(0,5)
+decTree_Error = rep(0, 5)
+RF_error = rep(0, 5)
+SVM_error = rep(0, 5)
+GLM_error = rep(0, 5)
 for (fold in 1:5) {
   set.seed(fold)
   
   num_samples = dim(labeled_final)[1]
   sampling.rate = 0.8
   training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-  trainingSet = subset(labeled_final[training,])
+  trainingSet = subset(labeled_final[training, ])
   testing = setdiff(1:num_samples, training)
-  testingSet = subset(labeled_final[testing, ])
+  testingSet = subset(labeled_final[testing,])
   
   decTreeModel = rpart(koi_disposition ~ ., data = trainingSet)
-  rpart.plot(decTreeModel)
   
-  decTreePredictions = predict(decTreeModel, testingSet, type = "class")
+  
+  
+  
+  #Automatically select the stopping point where cp no longer improves error by 0.05
+  errors = decTreeModel$cptable[, 3]
+  decTreeChangeError = c(0, 0, 0, 0, 0, 0, 0, 0, 0)
+  for (i in 1:8) {
+    decTreeChangeError[i] = errors[i + 1] - errors[i]
+  }
+  decTreeChangeError
+  for (i in 1:9) {
+    if (abs(decTreeChangeError[i]) < 0.05) {
+      stopIndex = i
+      break
+    }
+  }
+  
+  cps = decTreeModel$cptable[, 1]
+  cpStop = cps[stopIndex]
+  cpStop
+  prunedDecTreeModel = rpart::prune(decTreeModel, cp = cpStop)
+  
+  decTreePredictions = predict(prunedDecTreeModel, testingSet, type = "class")
   sizeTestSet = dim(testingSet)[1]
-  decTreePredictions
+  
   decTreeModel_error = sum(decTreePredictions != testingSet$koi_disposition)
   
-  misclassificationRateDecTree = decTreeModel_error/sizeTestSet
+  misclassificationRateDecTree = decTreeModel_error / sizeTestSet
   #new do pruning, etc.
   
   decTree_Error[fold] = misclassificationRateDecTree
-    
-  #Random Forest Model (Error in this model)
-  #RandForestModel=randomForest(koi_disposition~., data=trainingSet,importance=TRUE, ntree=100)
-  #summary(trainingSet)
-  #class(RandForestModel)
-  #predictionsRandForest=predict(RandForestModel,testingSet)
-  #errorRandForest = sum(predictionsRandForest!=testingSet$koi_disposition)
-  #misclassificationRateRandomForest=errorRandForest/sizeTestSet
-  #misclassificationRateRandomForest  
+  
+  #RandForestModel
+  RandForestModel = randomForest(koi_disposition ~ ., data = trainingSet)
+  predictedLabels = predict(RandForestModel, testingSet)
+  sizeTestSet = dim(testingSet)[1]
 
+  error = sum(predictedLabels != testingSet$koi_disposition)
+  misclassification_rateRandForest = error / sizeTestSet
+  RF_error[fold] = misclassification_rateRandForest
+  
+  
   #SVM Model
-  svmModel=svm(koi_disposition~.,data=trainingSet,kernel="linear")
-  predictedlabelsSVM=predict(svmModel,testingSet)
-  errorSVM=sum(predictedlabelsSVM!=testingSet$koi_disposition)
-  misclassification_rateSVM=errorSVM/sizeTestSet
+  svmModel = svm(koi_disposition ~ ., data = trainingSet, kernel = "linear")
+  predictedlabelsSVM = predict(svmModel, testingSet)
+  errorSVM = sum(predictedlabelsSVM != testingSet$koi_disposition)
+  misclassification_rateSVM = errorSVM / sizeTestSet
   SVM_error[fold] = misclassification_rateSVM
-
+  
   
   #Logistic Regression Model
-  LogisticReg = glm(koi_disposition ~ ., data = trainingSet, family = binomial(logit))
+  LogisticReg = glm(koi_disposition ~ .,
+                    data = trainingSet,
+                    family = binomial(logit))
   predicions = predict(LogisticReg, testingSet, type = "response")
-  predictedLabels = rep(0, sizeTestSet) 
-  predictedLabels = ifelse(predicions > 0.5, 'FALSE POSITIVE', 'CONFIRMED') 
+  predictedLabels = rep(0, sizeTestSet)
+  predictedLabels = ifelse(predicions > 0.5, 'FALSE POSITIVE', 'CONFIRMED')
   error = sum(predictedLabels != testingSet$koi_disposition)
   misclassificationRateLR = error / sizeTestSet
   GLM_error[fold] = misclassificationRateLR
- 
+  
 
 }
 ```
@@ -113,21 +138,20 @@ AvgErrorGLM = mean(GLM_error)
 ```
 
 
-
 Neural Network:
 ```{r}
 head(labeled_final)
 dim(labeled_final)
 
 
-#Neural network, smaller training set due to computational limits
+#Neural network,not doing k-cross fold due to computational limits
 set.seed(123)
 scaled_data = data.frame(scale(labeled_final[, 2:36]))
 scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 1,0)
 summary(scaled_data)
 head(scaled_data)
 num_samples = dim(scaled_data)[1]
-sampling.rate = 0.2
+sampling.rate = 0.8
 training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
 trainingSet.norm = subset(scaled_data[training, ])
 testing = setdiff(1:num_samples, training)
@@ -168,29 +192,61 @@ nnModel2 = neuralnet(
   linear.output = FALSE,
   act.fct = "logistic"
 )
-
+testingSet.norm[,variable.names]
+trainingSet.norm[,variable.names]
 plot(nnModel2)
-
-nnModel2$result.matrix
-plot(nnModel2)
-
 predictedLabels = compute(nnModel2, testingSet.norm[,variable.names])
 #predictedLabels$net.result
 
 results = data.frame(actual = testingSet.norm$koi_disposition, prediction = predictedLabels$net.result)
 error = sum(results$actual != round(results$prediction))
 NeuralNetMisClassRate = error/sizeTestSet
-
+NeuralNetMisClassRate
 ```
 KNN:
 ```{r}
-
-for (fold in 1:5){
-  set.seed(fold)
+numKs = 5
+k_errors = rep(0,numKs)
+for (ki in 1:numKs) {
+  avgErrors_fold = rep(0,5)
+  for (fold in 1:5) {
+    set.seed(fold)
+    scaled_data = data.frame(scale(labeled_final[, 2:36]))
+    scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 1, 0)
+    summary(scaled_data)
+    head(scaled_data)
+    num_samples = dim(scaled_data)[1]
+    sampling.rate = 0.8
+    training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+    trainingSet.norm = subset(scaled_data[training,])
+    testing = setdiff(1:num_samples, training)
+    testingSet.norm = subset(scaled_data[testing, ])
+    sizeTestSet = dim(testingSet.norm)[1]
+    
+    trainingfeatures = subset(trainingSet.norm, select = c(-koi_disposition))
+    traininglabels = trainingSet.norm$koi_disposition
+    testingfeatures = subset(testingSet.norm, select = c(-koi_disposition))
+    testinglabels = testingSet.norm$koi_disposition
+    predictedLabels = knn(trainingfeatures, testingfeatures, traininglabels, k =
+                           ki)
+ 
+    error = sum(predictedLabels != testingSet.norm$koi_disposition)
+    
+    misclassification_rate = error / sizeTestSet
+    avgErrors_fold[fold] = misclassification_rate
+  }
   
+  k_errors[ki] = mean(avgErrors_fold)
 }
 
+print(order(k_errors))
+#The lowest average error (this run) is from the model with k = 4. 
+AvgError_best_knn = k_errors[order(k_errors)[1]]
+```
 
+```{r}
+error_output = data.frame("Model"= c("Decision Tree","GLM","Random Forest","SVM","Neural Net","KNN"), "Error" = c(AvgErrorDT,AvgErrorGLM,AvgErrorRF,AvgErrorSVM,NeuralNetMisClassRate,AvgError_best_knn))
+print(error_output)
 ```
  
  
