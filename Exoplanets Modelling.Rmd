@@ -18,31 +18,43 @@ library(factoextra)
 ```{r}
 #read data
 originalKepplerData = read.csv("cumulative.csv") #read data
-#View(head(originalKepplerData))
-
 factored_keppler_data = originalKepplerData
 factored_keppler_data$koi_disposition = factor(originalKepplerData$koi_disposition) #factor character data
 factored_keppler_data$koi_pdisposition = factor(originalKepplerData$koi_pdisposition)
 head(factored_keppler_data)
 remove_KOI_tech_factoered = subset(factored_keppler_data, select = -c(koi_teq_err1)) #remove all-NA columns
 remove_KOI_tech_factoered = subset(remove_KOI_tech_factoered, select = -c(koi_teq_err2))
-
-#View(remove_KOI_tech_factoered)
 remove_NAs = na.exclude(remove_KOI_tech_factoered) #remove NAs
 
-identifiers_removed = subset(remove_NAs, select = -c(rowid, kepid, kepoi_name, kepler_name, koi_pdisposition, koi_score))
+identifiers_removed = subset(
+  remove_NAs,
+  select = -c(
+    rowid,
+    kepid,
+    kepoi_name,
+    kepler_name,
+    koi_pdisposition,
+    koi_score
+  )
+)
 #get rid of unique identifiers, as well as ones that can only be calculated once you know the outcome, like Koi_Pdisposition and koi_score
-
 #Also needs to remove flags, these can only be known after status is confirmed
-identifiers_removed = subset(identifiers_removed, select = -c(koi_fpflag_ss, koi_fpflag_ec, koi_fpflag_co, koi_fpflag_nt, koi_tce_plnt_num, koi_tce_delivname))
-
-
-
+identifiers_removed = subset(
+  identifiers_removed,
+  select = -c(
+    koi_fpflag_ss,
+    koi_fpflag_ec,
+    koi_fpflag_co,
+    koi_fpflag_nt,
+    koi_tce_plnt_num,
+    koi_tce_delivname
+  )
+)
 #separate into labeled and unlabeled data
 candidates_final = identifiers_removed[identifiers_removed$koi_disposition ==
-                                         "CANDIDATE", ] #separate out just the candidates
+                                         "CANDIDATE",] #separate out just the candidates
 labeled_final = identifiers_removed[identifiers_removed$koi_disposition !=
-                                      "CANDIDATE", ]
+                                      "CANDIDATE",]
 labeled_final = droplevels(labeled_final)
 candidates_final = droplevels(candidates_final)
 summary(labeled_final)
@@ -56,18 +68,13 @@ SVM_error = rep(0, 5)
 GLM_error = rep(0, 5)
 for (fold in 1:5) {
   set.seed(fold)
-  
   num_samples = dim(labeled_final)[1]
   sampling.rate = 0.8
   training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
   trainingSet = subset(labeled_final[training, ])
   testing = setdiff(1:num_samples, training)
   testingSet = subset(labeled_final[testing,])
-  
   decTreeModel = rpart(koi_disposition ~ ., data = trainingSet)
-  
-  
-  
   
   #Automatically select the stopping point where cp no longer improves error by 0.05
   errors = decTreeModel$cptable[, 3]
@@ -82,96 +89,205 @@ for (fold in 1:5) {
       break
     }
   }
-  
   cps = decTreeModel$cptable[, 1]
   cpStop = cps[stopIndex]
   cpStop
   prunedDecTreeModel = rpart::prune(decTreeModel, cp = cpStop)
-  
   decTreePredictions = predict(prunedDecTreeModel, testingSet, type = "class")
   sizeTestSet = dim(testingSet)[1]
-  
   decTreeModel_error = sum(decTreePredictions != testingSet$koi_disposition)
-  
   misclassificationRateDecTree = decTreeModel_error / sizeTestSet
   #new do pruning, etc.
-  
   decTree_Error[fold] = misclassificationRateDecTree
-  
   #RandForestModel
   RandForestModel = randomForest(koi_disposition ~ ., data = trainingSet)
   predictedLabels = predict(RandForestModel, testingSet)
   sizeTestSet = dim(testingSet)[1]
-
   error = sum(predictedLabels != testingSet$koi_disposition)
   misclassification_rateRandForest = error / sizeTestSet
   RF_error[fold] = misclassification_rateRandForest
-  
-  
   #SVM Model
   svmModel = svm(koi_disposition ~ ., data = trainingSet, kernel = "linear")
   predictedlabelsSVM = predict(svmModel, testingSet)
   errorSVM = sum(predictedlabelsSVM != testingSet$koi_disposition)
   misclassification_rateSVM = errorSVM / sizeTestSet
   SVM_error[fold] = misclassification_rateSVM
-  
-  
-  #Logistic Regression Model
-  LogisticReg = glm(koi_disposition ~ .,
-                    data = trainingSet,
-                    family = binomial(logit))
-  
-  predicions = predict(LogisticReg, testingSet, type = "response")
-  predictedLabels = rep(0, sizeTestSet)
-  predictedLabels = ifelse(predicions > 0.5, 'FALSE POSITIVE', 'CONFIRMED')
-  error = sum(predictedLabels != testingSet$koi_disposition)
-  misclassificationRateLR = error / sizeTestSet
-  GLM_error[fold] = misclassificationRateLR
-  
-  library(xgboost)
-  #XGBoost
-  xgTrain = data.matrix(trainingSet)
-  xgTrain[, 1] = ifelse(xgTrain[, 1] == 2, 1, 0)
-  
-  
-  xgBoostModel = xgboost(
-    data = xgTrain[, 2:36],
-    label = xgTrain[, 1],
-    max.depth = 3,
-    eta = 1,
-    nrounds = 2,
-    nthread = 2,
-    objective = "binary:logistic"
-  )
-  xgTest = data.matrix(testingSet)
-  xgTest[, 1] = ifelse(xgTest[, 1] == 2, 1, 0)
-  BoostPredictions = predict(xgBoostModel, data.matrix(testingSet)[, 2:36])
-  BoostError = sum(round(BoostPredictions) != testingSet$koi_disposition)
-  misclassificationRateBoost = error / sizeTestSet
-  
-}
+  }
 ```
+XGBoost with parameter tuning
+```{r}
+library(xgboost)
+threshold = 0.1
+XGBoost_error_thresholds = rep(0, 10)
+index = 1
+while (threshold < 1) {
+  XGB_error = rep(0, 5)
+  for (fold in 1:5) {
+    set.seed(fold)
+    
+    num_samples = dim(labeled_final)[1]
+    sampling.rate = 0.8
+    training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+    trainingSet = subset(labeled_final[training, ])
+    testing = setdiff(1:num_samples, training)
+    testingSet = subset(labeled_final[testing,])
+    
+    #XGBoost
+    xgTrain = data.matrix(trainingSet)
+    xgTrain[, 1] = ifelse(xgTrain[, 1] == 2, 1, 0)
+    
+    xgBoostModel = xgboost(
+      data = xgTrain[, 2:36],
+      label = xgTrain[, 1],
+      max.depth = 3,
+      eta = 1,
+      nrounds = 2,
+      nthread = 2,
+      objective = "binary:logistic"
+    )
+    xgTest = data.matrix(testingSet)
+    xgTest[, 1] = ifelse(xgTest[, 1] == 2, 1, 0)
+    BoostPredictions = predict(xgBoostModel, data.matrix(testingSet)[, 2:36])
+    BoostPredictionsRounded = ifelse(BoostPredictions > threshold, 1, 0)
+    BoostError = sum(BoostPredictionsRounded != xgTest[, 1])
+    misclassificationRateBoost = BoostError / dim(xgTest)[1]
+    XGB_error[fold] = misclassificationRateBoost
+  }
+  XGBoost_error_thresholds[index] = mean(XGB_error)
+  index = index + 1
+  threshold = threshold + .1
+}
+XGBoost_error_thresholds
+order(XGBoost_error_thresholds) #Lowest error is threshold = .4
+AvgErrorXGB = XGBoost_error_thresholds[(order(XGBoost_error_thresholds)[1])]
+
+plot(
+  x = 1:10 / 10,
+  y = XGBoost_error_thresholds,
+  main = "Avg Error over different thresholds for XGBoost Model",
+  xlab = "Cutoff Threshold",
+  ylab = "Misclassification Rate"
+)
+lines(x = 1:10 / 10, y = XGBoost_error_thresholds)
+```
+
+Logstic Regression: Do separately because of need to eliminate multicollinear variables
+```{r}
+
+#Check for multicollinearity
+corrFrame = data.frame(cor(labeled_final[, 2:36]))
+#all err2s are collinear with err1s. Removing err1s
+GLM_Data = data.frame(labeled_final$koi_disposition)
+GLM_Data
+variable_counter = 2
+variable.names = colnames(labeled_final)
+for (i in 2:length(labeled_final)) {
+  variable.names[i]
+  error1 = grepl("_err1", variable.names[i], fixed = TRUE)
+  if (error1 == FALSE) {
+    GLM_Data[, variable_counter] = labeled_final[, i]
+    variable_counter = variable_counter + 1
+  } else{
+    variable.names[i] = NA
+  }
+}
+
+variable.names = na.omit(variable.names)
+colnames(GLM_Data) = variable.names
+GLM_Data
+corrFrame2 = data.frame(cor(GLM_Data[, 2:dim(GLM_Data)[2]]))
+corrFrame2
+#KOI_period is collinear with koi_time0b
+GLM_Data = subset(GLM_Data, select = -c(koi_time0bk))
+#koi_period_err is collinear with koi_time0bk error
+GLM_Data = subset(GLM_Data, select = -c(koi_time0bk_err2))
+#Koi_period is collinear with koi_period_err2
+GLM_Data = subset(GLM_Data, select = -c(koi_period_err2))
+#koi_impact is collinear with koi_impact_err2
+GLM_Data = subset(GLM_Data, select = -c(koi_impact_err2))
+#koi_depth is collinear with koi_model_snr
+GLM_Data = subset(GLM_Data, select = -c(koi_model_snr))
+#koi impact is collinear with koi_prad and koi_prad_err
+GLM_Data = subset(GLM_Data, select = -c(koi_prad, koi_prad_err2))
+#koi_teq is collinear with KOI_insol, Koi_insol_err, koi_slogg, koi_srad, and koi_srad_err
+GLM_Data = subset(GLM_Data,
+                  select = -c(koi_insol, koi_insol_err2, koi_slogg, koi_srad, koi_srad_err2))
+#koi_steff is collinear with koi_steff_err2 and koi_slogg_err2
+GLM_Data = subset(GLM_Data, select = -c(koi_slogg_err2, koi_steff_err2))
+corrplot(cor(GLM_Data[, 2:dim(GLM_Data)[2]]))
+#all major multicollinearity has now been removed
+
+
+```
+```{r}
+threshold = 0.1
+GLM_error_thresholds = rep(0, 10)
+index = 1
+while (threshold < 1) {
+  GLM_error = rep(0, 5)
+  for (fold in 1:5) {
+    #parameter tune, k-cross fold TO DO
+    #Logistic Regression Model
+    
+    set.seed(fold)
+    num_samples = dim(GLM_Data)[1]
+    sampling.rate = 0.8
+    training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+    trainingSet = subset(GLM_Data[training, ])
+    testing = setdiff(1:num_samples, training)
+    testingSet = subset(GLM_Data[testing,])
+    trainingSet
+    
+    
+    
+    LogisticReg = glm(koi_disposition ~ .,
+                      data = trainingSet,
+                      family = binomial(logit))
+    
+    library(Matrix)
+    trainingSet
+    predictions = predict(LogisticReg, testingSet, type = "response")
+    predictedLabels = rep(0, sizeTestSet)
+    predictions
+    predictedLabels = ifelse(predictions > threshold, 'FALSE POSITIVE', 'CONFIRMED')
+    
+    error = sum(predictedLabels != testingSet$koi_disposition)
+    misclassificationRateLR = error / sizeTestSet
+    print(misclassificationRateLR)
+    GLM_error[fold] = misclassificationRateLR
+  }
+  
+  GLM_error_thresholds[index] = mean(GLM_error)
+  index = index + 1
+  threshold = threshold + .1
+}
+order(GLM_error_thresholds) #Lowest error is threshold = .5
+AvgErrorGLM = GLM_error_thresholds[order(GLM_error_thresholds)[1]]
+
+plot(
+  x = 1:10 / 10,
+  y = GLM_error_thresholds,
+  main = "Avg Error over different thresholds for Logistic Regression Model",
+  xlab = "Cutoff Threshold",
+  ylab = "Misclassification Rate"
+)
+lines(x = 1:10 / 10, y = GLM_error_thresholds)
+```
+
 Calculate Average Errors
 ```{r}
 AvgErrorDT = mean(decTree_Error)
 AvgErrorRF = mean(RF_error)
 AvgErrorSVM = mean(SVM_error)
-AvgErrorGLM = mean(GLM_error)
 ```
 
 
 Neural Network:
 ```{r}
-head(labeled_final)
-dim(labeled_final)
-
-
 #Neural network,not doing k-cross fold due to computational limits
 set.seed(123)
 scaled_data = data.frame(scale(labeled_final[, 2:36]))
-scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 1,0)
-summary(scaled_data)
-head(scaled_data)
+scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 1, 0)
 num_samples = dim(scaled_data)[1]
 sampling.rate = 0.8
 training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
@@ -180,12 +296,8 @@ testing = setdiff(1:num_samples, training)
 testingSet.norm = subset(scaled_data[testing,])
 sizeTestSet = dim(testingSet.norm)[1]
 koiDP.name = "koi_disposition"
-variable.names = rep(0, numCols)
-
-
 numCols = dim(testingSet.norm)[2]
 variable.names = colnames(testingSet.norm)[1:numCols - 1]
-
 variable.names
 for (i in 1:length(variable.names)) {
   error = grepl("_err", variable.names[i], fixed = TRUE)
@@ -194,11 +306,8 @@ for (i in 1:length(variable.names)) {
   }
   
 }
-
 variable.names = na.omit(variable.names)
 variable.names = variable.names[1:15]
-variable.names
-
 library(formulaic)
 nn.form <-
   create.formula(outcome.name = koiDP.name,
@@ -214,20 +323,38 @@ nnModel1 = neuralnet(
   linear.output = FALSE,
   act.fct = "logistic"
 )
-
-predictedLabels = compute(nnModel1, testingSet.norm[,variable.names])
+plot(nnModel1)
+predictedLabels = compute(nnModel1, testingSet.norm[, variable.names])
 #predictedLabels$net.result
-
-results = data.frame(actual = testingSet.norm$koi_disposition, prediction = predictedLabels$net.result)
-error = sum(results$actual != round(results$prediction))
-NeuralNetMisClassRate = error/sizeTestSet
+threshold = .1
+NNErrors = rep(0, 10)
+index = 1
+while (threshold <= 1) {
+  results = data.frame(actual = testingSet.norm$koi_disposition,
+                       prediction = predictedLabels$net.result)
+  results$roundedPrediction = ifelse(results$prediction > threshold, 1, 0)
+  error = sum(results$actual != results$roundedPrediction)
+  NNErrors[index] = error / sizeTestSet
+  threshold = threshold + .1
+  index = index + 1
+}
+order(NNErrors) #lowest misclass rate is at threshold = .5
+NeuralNetMisClassRate = NNErrors[order(NNErrors)[1]]
+plot(
+  x = 1:10 / 10,
+  y = NNErrors,
+  main = "Avg Error over different thresholds for Neural Network",
+  xlab = "Cutoff Threshold",
+  ylab = "Misclassification Rate"
+)
+lines(x = 1:10 / 10, y = NNErrors)
 ```
 KNN:
 ```{r}
-numKs = 5
-k_errors = rep(0,numKs)
+numKs = 10
+k_errors = rep(0, numKs)
 for (ki in 1:numKs) {
-  avgErrors_fold = rep(0,5)
+  avgErrors_fold = rep(0, 5)
   for (fold in 1:5) {
     set.seed(fold)
     scaled_data = data.frame(scale(labeled_final[, 2:36]))
@@ -237,9 +364,9 @@ for (ki in 1:numKs) {
     num_samples = dim(scaled_data)[1]
     sampling.rate = 0.8
     training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-    trainingSet.norm = subset(scaled_data[training,])
+    trainingSet.norm = subset(scaled_data[training, ])
     testing = setdiff(1:num_samples, training)
-    testingSet.norm = subset(scaled_data[testing, ])
+    testingSet.norm = subset(scaled_data[testing,])
     sizeTestSet = dim(testingSet.norm)[1]
     
     trainingfeatures = subset(trainingSet.norm, select = c(-koi_disposition))
@@ -247,8 +374,8 @@ for (ki in 1:numKs) {
     testingfeatures = subset(testingSet.norm, select = c(-koi_disposition))
     testinglabels = testingSet.norm$koi_disposition
     predictedLabels = knn(trainingfeatures, testingfeatures, traininglabels, k =
-                           ki)
- 
+                            ki)
+    
     error = sum(predictedLabels != testingSet.norm$koi_disposition)
     
     misclassification_rate = error / sizeTestSet
@@ -257,88 +384,63 @@ for (ki in 1:numKs) {
   
   k_errors[ki] = mean(avgErrors_fold)
 }
-
 print(order(k_errors))
-#The lowest average error (this run) is from the model with k = 4. 
+#The lowest average error (this run) is from the model with k = 4.
 AvgError_best_knn = k_errors[order(k_errors)[1]]
 ```
 
 Clustering:
 ```{r}
 library("factoextra")
-
 scaled_data = data.frame(scale(labeled_final[, 2:36]))
 scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 2, 1)
-summary(scaled_data)
-head(scaled_data)
 num_samples = dim(scaled_data)[1]
 features = subset(scaled_data, select = c(-koi_disposition))
-summary(features)
-head(scaled_data)
 kclustering = kmeans(features, centers = 2, nstart = 25)
-
 fviz_cluster(kclustering, data = features)
-head(kclustering$cluster)
-
 error = sum(scaled_data$koi_disposition != kclustering$cluster)
-error
 misclassification_rate = error / dim(scaled_data)[1]
 AvgErrorClustering = misclassification_rate
-
-
-
-
-
 ```
 
 
 ```{r}
 res.pca.exoplanets = prcomp(identifiers_removed[2:36], center = TRUE, scale = TRUE)
-
 summary(res.pca.exoplanets)
-PoV <- res.pca.exoplanets$sdev^2/sum(res.pca.exoplanets$sdev^2) #get proportions of variance
+PoV <-
+  res.pca.exoplanets$sdev ^ 2 / sum(res.pca.exoplanets$sdev ^ 2) #get proportions of variance
 numPcas = 13
-sum(PoV[1:numPcas]) #This gives us 83% explanation of variance. This is the number of variable in the original neural network, so I am using it here too to hopefully get a better NN with the same number of variables. 
-newDataSet = data.frame(res.pca.exoplanets$x[,1:numPcas])
-
-newDataSet$label= identifiers_removed$koi_disposition
-
-#fviz_pca_biplot(res.pca.exoplanets, col.ind = "cos2", repel = TRUE)
+sum(PoV[1:numPcas]) #This gives us 83% explanation of variance. This is the number of variable in the original neural network, so I am using it here too to hopefully get a better NN with the same number of variables.
+newDataSet = data.frame(res.pca.exoplanets$x[, 1:numPcas])
+newDataSet$label = identifiers_removed$koi_disposition
 fviz_pca_var(res.pca.exoplanets, col.var = "contrib")
-
 candidates_PCA = newDataSet[identifiers_removed$koi_disposition ==
-                                         "CANDIDATE", ] #separate out just the candidates
+                              "CANDIDATE",] #separate out just the candidates
 labeled_PCA = newDataSet[identifiers_removed$koi_disposition !=
-                                      "CANDIDATE", ]
+                           "CANDIDATE",]
 labeled_PCA = droplevels(labeled_PCA)
 candidates_PCA = droplevels(candidates_PCA)
-
-
 ```
 ```{r}
-#Redoing Neural Network
+#Redoing Neural Network with PCA
 set.seed(123)
 NN_labeled_PCA = labeled_PCA[, 1:numPcas]
 NN_labeled_PCA
-NN_labeled_PCA$koi_disposition = ifelse(labeled_PCA$label == "CONFIRMED", 1,0)
+NN_labeled_PCA$koi_disposition = ifelse(labeled_PCA$label == "CONFIRMED", 1, 0)
 summary(scaled_data)
 head(scaled_data)
 num_samples = dim(scaled_data)[1]
 sampling.rate = 0.8
 training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-trainingSet.norm.PCA = subset(NN_labeled_PCA[training, ])
+trainingSet.norm.PCA = subset(NN_labeled_PCA[training,])
 testing = setdiff(1:num_samples, training)
-testingSet.norm.PCA = subset(NN_labeled_PCA[testing,])
+testingSet.norm.PCA = subset(NN_labeled_PCA[testing, ])
 sizeTestSet = dim(testingSet.norm)[1]
 label.name = "label"
 variable.names = rep(0, numPcas)
-
-
 numCols = dim(testingSet.norm.PCA)[2]
 variable.names = colnames(testingSet.norm.PCA)[1:numCols - 1]
-
 variable.names
-
 library(formulaic)
 nn.form <-
   create.formula(outcome.name = koiDP.name,
@@ -354,37 +456,54 @@ nnModel2 = neuralnet(
   linear.output = FALSE,
   act.fct = "logistic"
 )
-
 plot(nnModel2)
-predictedLabels = compute(nnModel2, testingSet.norm.PCA[,variable.names])
+predictedLabels = compute(nnModel2, testingSet.norm.PCA[, variable.names])
 #predictedLabels$net.result
-
-results = data.frame(actual = testingSet.norm.PCA$koi_disposition, prediction = predictedLabels$net.result)
-error = sum(results$actual != round(results$prediction))
-PCA_13_v_NeuralNetMisClassRate = error/sizeTestSet
+threshold = .1
+NNErrors = rep(0, 10)
+index = 1
+while (threshold <= 1) {
+  results = data.frame(actual = testingSet.norm.PCA$koi_disposition,
+                       prediction = predictedLabels$net.result)
+  results$roundedPrediction = ifelse(results$prediction > threshold, 1, 0)
+  error = sum(results$actual != results$roundedPrediction)
+  NNErrors[index] = error / sizeTestSet
+  threshold = threshold + .1
+  index = index + 1
+}
+order(NNErrors) #lowest misclassification rate is at threshold = .5
+PCA_13_v_NeuralNetMisClassRate = NNErrors[order(NNErrors)[1]]
+plot(
+  x = 1:10 / 10,
+  y = NNErrors,
+  main = "Avg Error over thresholds for PCA Neural Network w/13 Vars",
+  xlab = "Cutoff Threshold",
+  ylab = "Misclassification Rate"
+)
+lines(x = 1:10 / 10, y = NNErrors)
 ```
 We get a slightly better misclassification rate from the PCA version of NN using 13 variables. 
 
 ```{r}
 #Last Neural Network, PCA, with 95% of variation explained
 numVars = (dim((labeled_final))[2])
-for (i in 1:(numVars)){
-  if (sum(PoV[1:i])>=.95){
+for (i in 1:(numVars)) {
+  if (sum(PoV[1:i]) >= .95) {
     numPcas = i
     break
     
   }
 }
 
-sum(PoV[1:numPcas]) #This gives us 83% explanation of variance. This is the number of variable in the original neural network, so I am using it here too to hopefully get a better NN with the same number of variables. 
-newDataSet = data.frame(res.pca.exoplanets$x[,1:numPcas])
+sum(PoV[1:numPcas])
+newDataSet = data.frame(res.pca.exoplanets$x[, 1:numPcas])
 
-newDataSet$label= identifiers_removed$koi_disposition
+newDataSet$label = identifiers_removed$koi_disposition
 
 candidates_PCA = newDataSet[identifiers_removed$koi_disposition ==
-                                         "CANDIDATE", ] #separate out just the candidates
+                              "CANDIDATE",] #separate out just the candidates
 labeled_PCA = newDataSet[identifiers_removed$koi_disposition !=
-                                      "CANDIDATE", ]
+                           "CANDIDATE",]
 labeled_PCA = droplevels(labeled_PCA)
 candidates_PCA = droplevels(candidates_PCA)
 ```
@@ -393,15 +512,15 @@ candidates_PCA = droplevels(candidates_PCA)
 set.seed(123)
 NN_labeled_PCA = labeled_PCA[, 1:numPcas]
 NN_labeled_PCA
-NN_labeled_PCA$koi_disposition = ifelse(labeled_PCA$label == "CONFIRMED", 1,0)
+NN_labeled_PCA$koi_disposition = ifelse(labeled_PCA$label == "CONFIRMED", 1, 0)
 summary(scaled_data)
 head(scaled_data)
 num_samples = dim(scaled_data)[1]
 sampling.rate = 0.8
 training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-trainingSet.norm.PCA = subset(NN_labeled_PCA[training, ])
+trainingSet.norm.PCA = subset(NN_labeled_PCA[training,])
 testing = setdiff(1:num_samples, training)
-testingSet.norm.PCA = subset(NN_labeled_PCA[testing,])
+testingSet.norm.PCA = subset(NN_labeled_PCA[testing, ])
 sizeTestSet = dim(testingSet.norm)[1]
 label.name = "label"
 variable.names = rep(0, numPcas)
@@ -429,18 +548,58 @@ nnModel3 = neuralnet(
 )
 
 plot(nnModel3)
-predictedLabels = compute(nnModel3, testingSet.norm.PCA[,variable.names])
+predictedLabels = compute(nnModel3, testingSet.norm.PCA[, variable.names])
 #predictedLabels$net.result
-
-results = data.frame(actual = testingSet.norm.PCA$koi_disposition, prediction = predictedLabels$net.result)
-error = sum(results$actual != round(results$prediction))
-PCA_20_v_NeuralNetMisClassRate = error/sizeTestSet
+index = 1
+threshold = .1
+NNErrors = rep(0, 10)
+while (threshold <= 1) {
+  results = data.frame(actual = testingSet.norm.PCA$koi_disposition,
+                       prediction = predictedLabels$net.result)
+  results$roundedPrediction = ifelse(results$prediction > threshold, 1, 0)
+  error = sum(results$actual != results$roundedPrediction)
+  NNErrors[index] = error / sizeTestSet
+  threshold = threshold + .1
+  index = index + 1
+}
+NNErrors #lowest error is with threshold = .6
+PCA_20_v_NeuralNetMisClassRate = NNErrors[order(NNErrors)[1]]
+plot(
+  x = 1:10 / 10,
+  y = NNErrors,
+  main = "Avg Error over thresholds for PCA Neural Network w/20 Vars",
+  xlab = "Cutoff Threshold",
+  ylab = "Misclassification Rate"
+)
+lines(x = 1:10 / 10, y = NNErrors)
 ```
 
 
-
 ```{r}
-error_output = data.frame("Model"= c("Decision Tree","GLM","Random Forest","SVM","Neural Net","KNN","Clustering", "PCA 13 Var NN", "PCA 20 Var NN"), "Misclassification Rate" = c(AvgErrorDT,AvgErrorGLM,AvgErrorRF,AvgErrorSVM,NeuralNetMisClassRate,AvgError_best_knn,AvgErrorClustering, PCA_13_v_NeuralNetMisClassRate,PCA_20_v_NeuralNetMisClassRate))
+error_output = data.frame(
+  "Model" = c(
+    "Decision Tree",
+    "GLM",
+    "Random Forest",
+    "SVM",
+    "Neural Net",
+    "KNN",
+    "Clustering",
+    "PCA 13 Var NN",
+    "PCA 20 Var NN"
+  ),
+  "Misclassification Rate" = c(
+    AvgErrorDT,
+    AvgErrorGLM,
+    AvgErrorRF,
+    AvgErrorSVM,
+    NeuralNetMisClassRate,
+    AvgError_best_knn,
+    AvgErrorClustering,
+    PCA_13_v_NeuralNetMisClassRate,
+    PCA_20_v_NeuralNetMisClassRate
+  )
+)
 print(error_output)
 ```
 
