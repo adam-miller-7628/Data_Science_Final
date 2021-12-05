@@ -71,9 +71,9 @@ for (fold in 1:5) {
   num_samples = dim(labeled_final)[1]
   sampling.rate = 0.8
   training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-  trainingSet = subset(labeled_final[training, ])
+  trainingSet = subset(labeled_final[training,])
   testing = setdiff(1:num_samples, training)
-  testingSet = subset(labeled_final[testing,])
+  testingSet = subset(labeled_final[testing, ])
   decTreeModel = rpart(koi_disposition ~ ., data = trainingSet)
   
   #Automatically select the stopping point where cp no longer improves error by 0.05
@@ -112,7 +112,7 @@ for (fold in 1:5) {
   errorSVM = sum(predictedlabelsSVM != testingSet$koi_disposition)
   misclassification_rateSVM = errorSVM / sizeTestSet
   SVM_error[fold] = misclassification_rateSVM
-  }
+}
 ```
 XGBoost with parameter tuning
 ```{r}
@@ -284,16 +284,16 @@ AvgErrorSVM = mean(SVM_error)
 
 Neural Network:
 ```{r}
-#Neural network,not doing k-cross fold due to computational limits
+#Neural network, not doing k - cross fold due to computational limits
 set.seed(123)
 scaled_data = data.frame(scale(labeled_final[, 2:36]))
 scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 1, 0)
 num_samples = dim(scaled_data)[1]
 sampling.rate = 0.8
 training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-trainingSet.norm = subset(scaled_data[training, ])
+trainingSet.norm = subset(scaled_data[training,])
 testing = setdiff(1:num_samples, training)
-testingSet.norm = subset(scaled_data[testing,])
+testingSet.norm = subset(scaled_data[testing, ])
 sizeTestSet = dim(testingSet.norm)[1]
 koiDP.name = "koi_disposition"
 numCols = dim(testingSet.norm)[2]
@@ -607,15 +607,13 @@ print(error_output)
 Best model is random forest. Remake this model with full dataset.
 ```{r}
   RandForestModel = randomForest(koi_disposition ~ ., data = labeled_final)
-  
-  
 ```
 Predict labels of candidates dataset, and write it to file
 ```{r}
 predictedLabels = predict(RandForestModel, candidates_final)
-  candidates_final$koi_disposition = predictedLabels
-  head(candidates_final)
-  write.csv(candidates_final,"labeledCandidates.csv")
+candidates_final$koi_disposition = predictedLabels
+head(candidates_final)
+write.csv(candidates_final, "labeledCandidates.csv")
 ```
 
  
