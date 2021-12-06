@@ -9,8 +9,14 @@ library(rpart.plot)
 library(randomForest)
 library(class)
 library(e1071)
+library(xgboost)
 library(FNN)
 library(factoextra)
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(tidyverse)
+library(DiagrammeR)
 ```
 
 
@@ -57,9 +63,74 @@ labeled_final = identifiers_removed[identifiers_removed$koi_disposition !=
                                       "CANDIDATE",]
 labeled_final = droplevels(labeled_final)
 candidates_final = droplevels(candidates_final)
-summary(labeled_final)
-summary(candidates_final)
+head(labeled_final)
+tail(labeled_final)
+head(candidates_final)
 ```
+
+```{r}
+
+variablesonly = labeled_final %>%
+  select(koi_period, koi_time0bk, koi_impact, koi_duration, koi_depth, koi_prad, koi_teq, koi_insol, koi_model_snr, koi_steff, koi_slogg, koi_srad, ra, dec, koi_kepmag)
+```
+
+
+#Create a correlation heat map with only the variables (excluding the errors). Defining significant correlations as those greater than .4, there are a few; this will need to be dealt with in Logistic regression, but should not affect other models. 
+```{r}
+cormat <- round(cor(variablesonly),2)
+head(cormat)
+
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+
+ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile()
+```
+
+#Create visualizations for CONFIRMED and FALSE POSITIVE against each other
+```{r}
+ggplot(data = labeled_final) +
+  geom_point(mapping = aes(x = koi_period, y = koi_time0bk)) + 
+  facet_wrap(~ koi_disposition, nrow = 2)
+```
+
+```{r}
+ggplot(data = labeled_final) +
+  geom_point(mapping = aes(x = koi_impact, y = koi_duration)) + 
+  facet_wrap(~ koi_disposition, nrow = 2)
+```
+
+```{r}
+ggplot(data = labeled_final) +
+  geom_point(mapping = aes(x = koi_depth, y = koi_prad)) + 
+  facet_wrap(~ koi_disposition, nrow = 2)
+```
+
+```{r}
+ggplot(data = labeled_final) +
+  geom_point(mapping = aes(x = koi_teq, y = koi_insol)) + 
+  facet_wrap(~ koi_disposition, nrow = 2)
+```
+
+```{r}
+ggplot(data = labeled_final) +
+  geom_point(mapping = aes(x = koi_model_snr, y = koi_steff)) + 
+  facet_wrap(~ koi_disposition, nrow = 2)
+```
+
+```{r}
+ggplot(data = labeled_final) +
+  geom_point(mapping = aes(x = koi_slogg, y = koi_srad)) + 
+  facet_wrap(~ koi_disposition, nrow = 2)
+```
+
+```{r}
+ggplot(data = labeled_final) +
+  geom_point(mapping = aes(x = ra, y = dec)) + 
+  facet_wrap(~ koi_disposition, nrow = 2)
+```
+
+
 First, do all models that don't require normalization
 ```{r}
 decTree_Error = rep(0, 5)
@@ -71,9 +142,9 @@ for (fold in 1:5) {
   num_samples = dim(labeled_final)[1]
   sampling.rate = 0.8
   training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-  trainingSet = subset(labeled_final[training,])
+  trainingSet = subset(labeled_final[training, ])
   testing = setdiff(1:num_samples, training)
-  testingSet = subset(labeled_final[testing, ])
+  testingSet = subset(labeled_final[testing,])
   decTreeModel = rpart(koi_disposition ~ ., data = trainingSet)
   
   #Automatically select the stopping point where cp no longer improves error by 0.05
@@ -112,11 +183,11 @@ for (fold in 1:5) {
   errorSVM = sum(predictedlabelsSVM != testingSet$koi_disposition)
   misclassification_rateSVM = errorSVM / sizeTestSet
   SVM_error[fold] = misclassification_rateSVM
-}
+  }
 ```
 XGBoost with parameter tuning
 ```{r}
-library(xgboost)
+
 threshold = 0.1
 XGBoost_error_thresholds = rep(0, 10)
 index = 1
@@ -160,7 +231,7 @@ while (threshold < 1) {
 XGBoost_error_thresholds
 order(XGBoost_error_thresholds) #Lowest error is threshold = .4
 AvgErrorXGB = XGBoost_error_thresholds[(order(XGBoost_error_thresholds)[1])]
-
+xgbPlot = xgb.plot.tree(model = xgBoostModel, trees = 1, render = TRUE)
 plot(
   x = 1:10 / 10,
   y = XGBoost_error_thresholds,
@@ -284,16 +355,16 @@ AvgErrorSVM = mean(SVM_error)
 
 Neural Network:
 ```{r}
-#Neural network, not doing k - cross fold due to computational limits
+#Neural network,not doing k-cross fold due to computational limits
 set.seed(123)
 scaled_data = data.frame(scale(labeled_final[, 2:36]))
 scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 1, 0)
 num_samples = dim(scaled_data)[1]
 sampling.rate = 0.8
 training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-trainingSet.norm = subset(scaled_data[training,])
+trainingSet.norm = subset(scaled_data[training, ])
 testing = setdiff(1:num_samples, training)
-testingSet.norm = subset(scaled_data[testing, ])
+testingSet.norm = subset(scaled_data[testing,])
 sizeTestSet = dim(testingSet.norm)[1]
 koiDP.name = "koi_disposition"
 numCols = dim(testingSet.norm)[2]
@@ -603,17 +674,19 @@ error_output = data.frame(
 print(error_output)
 ```
 
-
+s
 Best model is random forest. Remake this model with full dataset.
 ```{r}
   RandForestModel = randomForest(koi_disposition ~ ., data = labeled_final)
+  
+  
 ```
 Predict labels of candidates dataset, and write it to file
 ```{r}
 predictedLabels = predict(RandForestModel, candidates_final)
-candidates_final$koi_disposition = predictedLabels
-head(candidates_final)
-write.csv(candidates_final, "labeledCandidates.csv")
+  candidates_final$koi_disposition = predictedLabels
+  head(candidates_final)
+  write.csv(candidates_final,"labeledCandidates.csv")
 ```
 
  
