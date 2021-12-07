@@ -319,13 +319,12 @@ while (threshold < 1) {
     xgBoostModel = xgboost(
       data = xgTrain[, 2:36],
       label = xgTrain[, 1],
-      max.depth = 3,
-      eta = 1,
-      nrounds = 2,
-      nthread = 2,
+      max.depth = 6,
+      eta = .22,
+      nrounds = 100,
+      verbose = 0,
       objective = "binary:logistic",
-      eval_metric = "logloss",verbose = 0
-      
+      eval_metric="error"
     )
     xgTest = data.matrix(testingSet)
     xgTest[, 1] = ifelse(xgTest[, 1] == 2, 1, 0)
@@ -362,10 +361,9 @@ plot(
 )
 lines(x = 1:10 / 10, y = XGBoost_error_thresholds)
 ```
-XGBoost gives an error rate of 10.8%. This is better than a single decision tree, but does not beat Random Forest or SVM. The threshold analysis graph above shows that the best misclassification rate for XGBoost is actually at the threshold = .4. 
+XGBoost gives an error rate of `r round(AvgErrorXGB*100,2)`%. This is significantly better than any model run so far.  The threshold analysis graph above shows that the best misclassification rate for XGBoost is actually at the threshold = .4. 
  
    
-
 ### 3.1.5) Logistic Regression
 
 Logistic regression models is a supervised classification algorithm that builds a regression model to predict the classification by assigning data entries to binary values, based on the Sigmoid function. When performing logistic regression, it is important to consider the problems that arise from multicollinearity which can cause unstable estimates and inaccuracy. For this reason, we decided to first remove all major multicollinearity from the model. 
@@ -832,7 +830,8 @@ error_output = data.frame(
     "KNN",
     "Clustering",
     "PCA 13 Var NN",
-    "PCA 20 Var NN"
+    "PCA 20 Var NN",
+    "XGBoost"
   ),
   "Misclassification Rate" = c(
     AvgErrorDT,
@@ -843,28 +842,46 @@ error_output = data.frame(
     AvgError_best_knn,
     AvgErrorClustering,
     PCA_13_v_NeuralNetMisClassRate,
-    PCA_20_v_NeuralNetMisClassRate
+    PCA_20_v_NeuralNetMisClassRate,
+    AvgErrorXGB
   )
 )
 print(error_output)
 ```
-Random Forest has the lowest misclassification rate. We will remake this model using the full dataset.
+XGBoost has the lowest misclassification rate. We will remake this model using the full dataset.
 
 
 #5 Make predictions
 
-Remake the random forest model using the full dataset:
+Remake the XGBoost model using the full dataset:
 ```{r}
-  RandForestModel = randomForest(koi_disposition ~ ., data = labeled_final)
-  
-  
+   xgData = data.matrix(labeled_final)
+    xgData[, 1] = ifelse(xgData[, 1] == 2, 1, 0)
+   
+    xgBoostModelFinal = xgboost(
+      data = xgData[, 2:36],
+      label = xgData[, 1],
+      max.depth = 6,
+      eta = .22,
+      nrounds = 100,
+      verbose = 0,
+      objective = "binary:logistic",
+      eval_metric="error"
+    )
+    xgPredict = data.matrix(candidates_final)
+    xgPredict[, 1] = ifelse(xgPredict[, 1] == 2, 1, 0)
+    
+   
 ```
 Predict labels of candidates dataset, and write it to file
 ```{r}
-predictedLabels = predict(RandForestModel, candidates_final)
-  candidates_final$koi_disposition = predictedLabels
-  head(candidates_final)
-  write.csv(candidates_final,"labeledCandidates.csv")
+ #make predictions
+BoostPredictions = predict(xgBoostModelFinal, data.matrix(candidates_final)[, 2:36])
+BoostPredictionsRounded = ifelse(BoostPredictions > .4, 1, 0)
+predictedLabels = ifelse(BoostPredictionsRounded == 1, "FALSE POSITIVE", "CONFIRMED")
+candidates_final$koi_disposition = predictedLabels
+head(candidates_final)
+write.csv(candidates_final, "labeledCandidates.csv")
 ```
 
  
