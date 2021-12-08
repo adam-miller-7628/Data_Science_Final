@@ -21,7 +21,7 @@ To solve this problem, we will carry out the following process:
         - 3.1.3) Logistic Regression
     + 3.2) Models using scaled data:
         - 3.2.1) Neural Network: Original Variables
-        - 3.2.2) Neural Network: PCA w/13 Variables
+        - 3.2.2) Neural Network: PCA w/15 Variables
         - 3.2.3) Neural Network: PCA w/20 Variables
         - 3.2.4) K-Nearest Neighbours
         - 3.2.5) K-Means Clustering
@@ -103,6 +103,16 @@ labeled_final = identifiers_removed[identifiers_removed$koi_disposition !=
                                       "CANDIDATE",]
 labeled_final = droplevels(labeled_final)       
 candidates_final = droplevels(candidates_final)
+
+numFalse = sum(labeled_final$koi_disposition=="FALSE POSITIVE")
+numConfirmed = sum(labeled_final$koi_disposition=="CONFIRMED")
+##check
+numFalse + numConfirmed == dim(labeled_final)[1]
+
+Proportions = data.frame(label = c("CONFIRMED","FALSE POSITIVE"), number = c(numConfirmed,numFalse))
+bp = ggplot(Proportions,aes(x = "",y=number,fill=label))+geom_bar(width = 1,stat = "identity")
+pie = bp+coord_polar("y", start = 0) + ggtitle("Proportions of labeled_final that are CONFIRMED or FALSE POSITIVE")
+pie
 head(labeled_final)
 head(candidates_final)
 ```
@@ -209,13 +219,56 @@ Random forest models are more accurate and robust but harder to interpret than a
 
 SVM models are supervised learning models that use the data points to create a line to separate the data. This separation then decides the binary classification for each data point. While this model can be incredibly versatile and robust against outliers and inaccurate data, it may not be as accurate if there is much overlap between the data. 
 
+Helper Function:
+```{r}
+AllErrors = function(correctResults,
+                     predictedResults,
+                     sizeTestSet, numerical = 0) {
+  isWrong = (correctResults != predictedResults)
+  isRight = (correctResults == predictedResults)
+  Errors = sum(correctResults != predictedResults)
+  ErrorRate = Errors / sizeTestSet
+  
+  
+  if (numerical == 0) {
+    IsC = (predictedResults == 'CONFIRMED')
+    IsF = (predictedResults == 'FALSE POSITIVE')
+  }else{
+    IsC = (predictedResults == 1)
+    IsF = (predictedResults == 0)
+  }
+  
+  FalsePositives = sum(isWrong & IsC)
+  FalseNegatives = sum(isWrong & IsF)
+  TruePositives = sum(isRight & IsC)
+  TrueNegatives = sum(isRight & IsF)
+  FP_Rate = (FalsePositives / (FalsePositives + TrueNegatives))#define FP rate as FP/(FP+TN)
+  FN_Rate = (FalseNegatives / (FalseNegatives + TruePositives))#define FN rate as FN/(FN+TP)
+  return(list(ErrorRate, FP_Rate, FN_Rate))
+}
+```
+
 Code for decision tree, random forest, and SVM:
 ```{r}
-decTree_Error = rep(0, 5)
-RF_error = rep(0, 5)
-SVM_error = rep(0, 5)
 
-for (fold in 1:5) {
+
+NumFolds = 5
+CreateErrorMatrix = function(numFolds) {
+  return(rep(0, numFolds))
+}
+
+
+decTree_Error = CreateErrorMatrix(NumFolds)
+decTree_FP = CreateErrorMatrix(NumFolds)
+decTree_FN = CreateErrorMatrix(NumFolds)
+
+RF_error = CreateErrorMatrix(NumFolds)
+RF_error_FP = CreateErrorMatrix(NumFolds)
+RF_error_FN = CreateErrorMatrix(NumFolds)
+SVM_error = CreateErrorMatrix(NumFolds)
+SVM_error_FP = CreateErrorMatrix(NumFolds)
+SVM_error_FN = CreateErrorMatrix(NumFolds)
+for (fold in 1:NumFolds) {
   #set up k-crossfold validation
   set.seed(fold)
   
@@ -224,9 +277,9 @@ for (fold in 1:5) {
   num_samples = dim(labeled_final)[1]
   sampling.rate = 0.8
   training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-  trainingSet = subset(labeled_final[training,])
+  trainingSet = subset(labeled_final[training, ])
   testing = setdiff(1:num_samples, training)
-  testingSet = subset(labeled_final[testing, ])
+  testingSet = subset(labeled_final[testing,])
   
   
   #Decision tree
@@ -248,40 +301,60 @@ for (fold in 1:5) {
   cps = decTreeModel$cptable[, 1]
   cpStop = cps[stopIndex]
   
- 
+  
   prunedDecTreeModel = rpart::prune(decTreeModel, cp = cpStop) #Prune decision tree
   decTreePredictions = predict(prunedDecTreeModel, testingSet, type = "class") #make predictions
   #Determine decision tree error
   sizeTestSet = dim(testingSet)[1]
-  decTreeModel_error = sum(decTreePredictions != testingSet$koi_disposition)
-  misclassificationRateDecTree = decTreeModel_error / sizeTestSet
-  decTree_Error[fold] = misclassificationRateDecTree
-
+  decTreeModel_errors = AllErrors(testingSet$koi_disposition,
+                                  decTreePredictions,
+                                  sizeTestSet)
+  decTree_Error[fold] = decTreeModel_errors[[1]]
+  decTree_FP[fold] = decTreeModel_errors[[2]]
+  decTree_FN[fold] = decTreeModel_errors[[3]]
   #Random Forest
-  RandForestModel = randomForest(koi_disposition ~ ., data = trainingSet)
+  RandForestModel = randomForest(koi_disposition ~ ., data = trainingSet, ntrees = 200)#visual inspection gives this as a good number for trees
+  
   predictedLabels = predict(RandForestModel, testingSet)
   
   #Determine Random Forest Error
   sizeTestSet = dim(testingSet)[1]
-  error = sum(predictedLabels != testingSet$koi_disposition)
-  misclassification_rateRandForest = error / sizeTestSet
-  RF_error[fold] = misclassification_rateRandForest
+  RF_Errors = AllErrors(testingSet$koi_disposition, predictedLabels, sizeTestSet)
+  
+
+  RF_error[fold] = RF_Errors[[1]]
+  RF_error_FP[fold] = RF_Errors[[2]]
+  RF_error_FN[fold] = RF_Errors[[3]]
   
   #SVM Model
   svmModel = svm(koi_disposition ~ ., data = trainingSet, kernel = "linear")
   predictedlabelsSVM = predict(svmModel, testingSet)
   #Determine SVM error
+  SVM_Errors = AllErrors(testingSet$koi_disposition,
+                         predictedlabelsSVM,
+                         sizeTestSet)
+  
   errorSVM = sum(predictedlabelsSVM != testingSet$koi_disposition)
   misclassification_rateSVM = errorSVM / sizeTestSet
-  SVM_error[fold] = misclassification_rateSVM
+  SVM_error[fold] = SVM_Errors[[1]]
+  SVM_error_FP[fold] = SVM_Errors[[2]]
+  SVM_error_FN[fold] = SVM_Errors[[3]]
 }
 #Take average of errors from each fold to determine average error for each model
+
 AvgErrorDT = mean(decTree_Error)
+AvgFP_DT = mean(decTree_FP)
+AvgFN_DT = mean(decTree_FN)
 AvgErrorRF = mean(RF_error)
+AvgFP_RF = mean(RF_error_FP)
+AvgFN_RF = mean(RF_error_FN)
 AvgErrorSVM = mean(SVM_error)
-paste("DT Error: ", round(100*AvgErrorDT,2),"%",sep = "")
-paste("RF Error: ", round(100*AvgErrorRF,2),"%",sep = "")
-paste("SVM Error: ", round(100*AvgErrorSVM,2),"%",sep = "")
+AvgFP_SVM = mean(SVM_error_FP)
+AvgFN_SVM = mean(SVM_error_FN)
+
+paste("DT Error: ", round(100 * AvgErrorDT, 2), "%", sep = "")
+paste("RF Error: ", round(100 * AvgErrorRF, 2), "%", sep = "")
+paste("SVM Error: ", round(100 * AvgErrorSVM, 2), "%", sep = "")
 ```
 All three models give low misclassification rates <12%, but Random Forest gives the best misclassification rate at only 6.74%.
 
@@ -295,11 +368,16 @@ XGBoost outputs a probability between 0 and 1, rather than a binary classificati
 xgb.set.config(verbosity = 0)
 threshold = 0.1
 XGBoost_error_thresholds = rep(0, 10)
+XGBoost_FP_thresholds = rep(0,10)
+XGBoost_FN_thresholds = rep(0,10)
 index = 1
+
 while (threshold < 1) {
   #loop that reruns the algorithm with increments of 0.1 in the threshold
-  XGB_error = rep(0, 5)
-  for (fold in 1:5) {
+  XGB_error = CreateErrorMatrix(NumFolds)
+  XGB_FNs = CreateErrorMatrix(NumFolds)
+  XGB_FPs = CreateErrorMatrix(NumFolds)
+  for (fold in 1:NumFolds) {
     #k cross-fold validation
     set.seed(fold)
     
@@ -329,14 +407,25 @@ while (threshold < 1) {
     xgTest = data.matrix(testingSet)
     xgTest[, 1] = ifelse(xgTest[, 1] == 2, 1, 0)
     
+    
+    
     #make predictions
     BoostPredictions = predict(xgBoostModel, data.matrix(testingSet)[, 2:36])
+    
+    
+    
+    
     BoostPredictionsRounded = ifelse(BoostPredictions > threshold, 1, 0) #convert probabilities to ouputs of 1 or 0 based on whether they are greater than the threshold - this is where parameter tuning occurs.
-    BoostError = sum(BoostPredictionsRounded != xgTest[, 1])
-    misclassificationRateBoost = BoostError / dim(xgTest)[1]
-    XGB_error[fold] = misclassificationRateBoost
+    BoostErrors = AllErrors(xgTest[, 1],BoostPredictionsRounded,dim(xgTest)[1],1)
+    XGB_error[fold] = BoostErrors[[1]]
+    XGB_FPs = BoostErrors[[2]]
+    XGB_FNs = BoostErrors[[3]]
+   
   }
   XGBoost_error_thresholds[index] = mean(XGB_error)#average the error from all folds
+  XGBoost_FP_thresholds[index] = mean(XGB_FPs)
+  XGBoost_FN_thresholds[index] = mean(XGB_FNs)
+  
   index = index + 1
   threshold = threshold + .1
 }
@@ -350,6 +439,8 @@ xgbPlot #plot an example tree
 XGBoost_error_thresholds#shows the average error at each threshold
 order(XGBoost_error_thresholds) #Lowest error is threshold = .4
 AvgErrorXGB = XGBoost_error_thresholds[(order(XGBoost_error_thresholds)[1])] #chose the threshold with the lowest error as the one we use
+AvgFP_XGB = XGBoost_FP_thresholds[(order(XGBoost_error_thresholds)[1])]
+AvgFN_XGB = XGBoost_FN_thresholds[(order(XGBoost_error_thresholds)[1])]
 paste("XGBoost Error: ", round(AvgErrorXGB*100,2), "%", sep = "")
 #plot the error thresholds
 plot(
@@ -361,7 +452,7 @@ plot(
 )
 lines(x = 1:10 / 10, y = XGBoost_error_thresholds)
 ```
-XGBoost gives an error rate of `r round(AvgErrorXGB*100,2)`%. This is significantly better than any model run so far.  The threshold analysis graph above shows that the best misclassification rate for XGBoost is actually at the threshold = .4. 
+XGBoost gives an error rate of `r round(AvgErrorXGB*100,2)`%. This is significantly better than any model run so far.  The threshold analysis graph above shows that the best misclassification rate for XGBoost is at the threshold = .`r (order(XGBoost_error_thresholds)[1])`. 
  
    
 ### 3.1.5) Logistic Regression
@@ -423,21 +514,27 @@ corrplot(cor(GLM_Data[, 2:dim(GLM_Data)[2]]))
 Similarly to XGBoost, the cutoff threshold  for prediction must be tuned. Our group decided to run multiple tests ranging from 0.1 to 1 to determine that the ideal threshold value of 0.5 should be used as that corresponded with the lowest average error. 
 ```{r}
 threshold = 0.1
-GLM_error = rep(0, 5)
+GLM_error = CreateErrorMatrix(NumFolds)
 GLM_error_thresholds = rep(0, 10)
+GLM_FP_thresholds = rep(0, 10)
+GLM_FN_thresholds = rep(0, 10)
 index = 1
-while (threshold < 1) { #loop for threshold analysis
-  GLM_error = rep(0, 5) 
-  for (fold in 1:5) {#K-cross fold validation
-
-    #training/testing set    
+while (threshold < 1) {
+  #loop for threshold analysis
+  GLM_error = CreateErrorMatrix(NumFolds)
+  GLM_FP = CreateErrorMatrix(NumFolds)
+  GLM_FN = CreateErrorMatrix(NumFolds)
+  for (fold in 1:5) {
+    #K-cross fold validation
+    
+    #training/testing set
     set.seed(fold)
     num_samples = dim(GLM_Data)[1]
     sampling.rate = 0.8
     training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
-    trainingSet = subset(GLM_Data[training, ])
+    trainingSet = subset(GLM_Data[training,])
     testing = setdiff(1:num_samples, training)
-    testingSet = subset(GLM_Data[testing,])
+    testingSet = subset(GLM_Data[testing, ])
     defaultW = getOption("warn")
     options(warn = -1)
     #set up model
@@ -451,19 +548,28 @@ while (threshold < 1) { #loop for threshold analysis
     predictedLabels = rep(0, sizeTestSet)
     predictedLabels = ifelse(predictions > threshold, 'FALSE POSITIVE', 'CONFIRMED') #this parameter is tuned
     
-    
+    GLMErrors = AllErrors(testingSet$koi_disposition, predictedLabels, sizeTestSet, 0)
     #determine error
-    error = sum(predictedLabels != testingSet$koi_disposition)
-    misclassificationRateLR = error / sizeTestSet
-    GLM_error[fold] = misclassificationRateLR
+    # error = sum(predictedLabels != testingSet$koi_disposition)
+    #misclassificationRateLR = error / sizeTestSet
+    #GLM_error[fold] = misclassificationRateLR
+    GLM_error[fold] = GLMErrors[[1]]
+    GLM_FP[fold] = GLMErrors[[2]]
+    GLM_FN[fold] = GLMErrors[[3]]
+    
   }
   
   GLM_error_thresholds[index] = mean(GLM_error)
+  GLM_FP_thresholds[index] = mean(GLM_FP)
+  GLM_FN_thresholds[index] = mean(GLM_FN)
   index = index + 1
   threshold = threshold + .1
 }
 order(GLM_error_thresholds) #Lowest error is threshold = .5
 AvgErrorGLM = GLM_error_thresholds[order(GLM_error_thresholds)[1]]
+AvgFP_GLM = GLM_FP_thresholds[order(GLM_error_thresholds)[1]]
+AvgFN_GLM = GLM_FN_thresholds[order(GLM_error_thresholds)[1]]
+
 paste("Logistic Regression Error: ", round(AvgErrorGLM*100,2),"%",sep="")
 plot(
   x = 1:10 / 10,
@@ -520,16 +626,16 @@ variable.names = variable.names[1:15]
 nn.form <-
   create.formula(outcome.name = koiDP.name,
                  input.names = variable.names)
-nn.form
+nn.form #15 variables
+
 
 #Fit neural network
 nnModel1 = neuralnet(
   nn.form,
   data = trainingSet.norm,
   hidden = 2,
-  
   linear.output = FALSE,
-  act.fct = "logistic"
+  act.fct = "logistic",
 )
 plot(nnModel1)
 
@@ -538,20 +644,27 @@ predictedLabels = compute(nnModel1, testingSet.norm[, variable.names])
 
 #tune threshold parameter
 threshold = .1
-NNErrors = rep(0, 10)
+NNErrors = CreateErrorMatrix(10)
+NN_FPs = CreateErrorMatrix(10)
+NN_FNs = CreateErrorMatrix(10)
 index = 1
 while (threshold <= 1) {
   results = data.frame(actual = testingSet.norm$koi_disposition,
                        prediction = predictedLabels$net.result)
   results$roundedPrediction = ifelse(results$prediction > threshold, 1, 0)
-  error = sum(results$actual != results$roundedPrediction)
-  NNErrors[index] = error / sizeTestSet
+  #error = sum(results$actual != results$roundedPrediction)
+  Errors = AllErrors(results$actual,results$roundedPrediction,sizeTestSet,1)
+  NNErrors[index] = Errors[[1]]
+  NN_FPs[index] = Errors[[2]]
+  NN_FNs[index] = Errors[[3]]
   threshold = threshold + .1
   index = index + 1
 }
 
 order(NNErrors) #lowest misclass rate is at threshold = .5
 NeuralNetMisClassRate = NNErrors[order(NNErrors)[1]]
+AvgFP_NN = NN_FPs[order(NNErrors)[1]]
+AvgFN_NN = NN_FNs[order(NNErrors)[1]]
 paste("Neural Net Misclassification Rate: ",round(100*NeuralNetMisClassRate,2),"%",sep="")
 plot(
   x = 1:10 / 10,
@@ -564,17 +677,17 @@ lines(x = 1:10 / 10, y = NNErrors)
 ```
 In this run, NN had an error rate of `r NeuralNetMisClassRate`, with an optimal cutoff threshold of .5. We will revisit the NN below, to look at ways to use PCA to capture variation while reducing necessary computational resources. 
 
-### Neural Network: PCA w/13 Variables
+### Neural Network: PCA w/15 Variables
 
-Principal Component Analysis allows us to reduce dimensionality while capturing as much of the underlying variation in the data as possible. The first application of PCA we found was for Neural Networks, which are very computationally difficult. We decided to first use a PCA with 13 variables, the same number of variables as our original neural network. This would mean the same computational strain, but with features that are guaranteed to capture as much variation as possible with that number of variables. 
+Principal Component Analysis allows us to reduce dimensionality while capturing as much of the underlying variation in the data as possible. The first application of PCA we found was for Neural Networks, which are very computationally difficult. We decided to first use a PCA with 15 variables, the same number of variables as our original neural network. This would mean the same computational strain, but with features that are guaranteed to capture as much variation as possible with that number of variables. 
    
 ```{r}
 res.pca.exoplanets = prcomp(identifiers_removed[2:36], center = TRUE, scale = TRUE) #perform PCA
 summary(res.pca.exoplanets)
 PoV <-
   res.pca.exoplanets$sdev ^ 2 / sum(res.pca.exoplanets$sdev ^ 2) #get proportions of variance
-numPcas = 13
-sum(PoV[1:numPcas]) #This gives us 83% explanation of variance. This is the number of variable in the original neural network, so we are using this to get a better NN with the same number of variables
+numPcas = 15
+sum(PoV[1:numPcas]) #This gives us 88% explanation of variance. This is the number of variable in the original neural network, so we are using this to get a better NN with the same number of variables
 newDataSet = data.frame(res.pca.exoplanets$x[, 1:numPcas])
 newDataSet$label = identifiers_removed$koi_disposition
 fviz_pca_var(res.pca.exoplanets, col.var = "contrib")
@@ -626,19 +739,27 @@ predictedLabels = compute(nnModel2, testingSet.norm.PCA[, variable.names])
 #Tune threshold
 threshold = .1
 NNErrors = rep(0, 10)
+NN_FNs = rep(0,10)
+NN_FPs = rep(0,10)
 index = 1
 while (threshold <= 1) {
   results = data.frame(actual = testingSet.norm.PCA$koi_disposition,
                        prediction = predictedLabels$net.result)
   results$roundedPrediction = ifelse(results$prediction > threshold, 1, 0)
   error = sum(results$actual != results$roundedPrediction)
-  NNErrors[index] = error / sizeTestSet
+  Errors = AllErrors(results$actual,results$roundedPrediction,sizeTestSet,1)
+  NNErrors[index] = Errors[[1]]
+  NN_FPs[index] = Errors[[2]]
+  NN_FNs[index] = Errors[[3]]
+ 
   threshold = threshold + .1
   index = index + 1
 }
-order(NNErrors) #lowest misclassification rate is at threshold = .5
-PCA_13_v_NeuralNetMisClassRate = NNErrors[order(NNErrors)[1]]
-paste("Neural Net (PCA, 13 var) Misclassification Rate: ",round(100*PCA_13_v_NeuralNetMisClassRate,2),"%",sep="")
+order(NNErrors) #lowest misclassification rate is at threshold = .4
+PCA_15_v_NeuralNetMisClassRate = NNErrors[order(NNErrors)[1]]
+Avg_FP_PCA15NN = NN_FPs[order(NNErrors)[1]]
+Avg_FN_PCA15NN = NN_FNs[order(NNErrors)[1]]
+paste("Neural Net (PCA, 15 var) Misclassification Rate: ",round(100*PCA_15_v_NeuralNetMisClassRate,2),"%",sep="")
 
 plot(
   x = 1:10 / 10,
@@ -649,7 +770,7 @@ plot(
 )
 lines(x = 1:10 / 10, y = NNErrors)
 ```
-We get abetter misclassification rate from the PCA version of NN using 13 variables of `r round(PCA_13_v_NeuralNetMisClassRate*100,2)`%, which is `r round(100*(NeuralNetMisClassRate - PCA_13_v_NeuralNetMisClassRate),2)`% less than our last Neural Network, and an optimal cutoff threshold of .5. 
+We get abetter misclassification rate from the PCA version of NN using 13 variables of `r round(PCA_15_v_NeuralNetMisClassRate*100,2)`%, which is `r round(100*(NeuralNetMisClassRate - PCA_15_v_NeuralNetMisClassRate),2)`% less than our last Neural Network, and an optimal cutoff threshold of .5. 
 
 ### 3.2.3) Neural Network: PCA w/20 Variables
 
@@ -702,12 +823,15 @@ nn.form <-
                  input.names = variable.names)
 nn.form
 
-nnModel3 = neuralnet(
+library(neuralnet)
+nnModel3 = neuralnet( #parameters tuned manually to ensure this stays computationally tractable
   nn.form,
   data = trainingSet.norm.PCA,
-  hidden = 2,
+  hidden = c(5),
   linear.output = FALSE,
-  act.fct = "logistic"
+  act.fct = "logistic",
+  stepmax=17000,
+  threshold = 0.1
 )
 
 plot(nnModel3)
@@ -718,17 +842,24 @@ predictedLabels = compute(nnModel3, testingSet.norm.PCA[, variable.names])
 index = 1
 threshold = .1
 NNErrors = rep(0, 10)
+NN_FPs = rep(0,10)
+NN_FNs = rep(0,10)
 while (threshold <= 1) { #tune threshold parameter
   results = data.frame(actual = testingSet.norm.PCA$koi_disposition,
                        prediction = predictedLabels$net.result)
   results$roundedPrediction = ifelse(results$prediction > threshold, 1, 0)
   error = sum(results$actual != results$roundedPrediction)
-  NNErrors[index] = error / sizeTestSet
+   Errors = AllErrors(results$actual,results$roundedPrediction,sizeTestSet,1)
+  NNErrors[index] = Errors[[1]]
+  NN_FPs[index] = Errors[[2]]
+  NN_FNs[index] = Errors[[3]]
   threshold = threshold + .1
   index = index + 1
 }
 NNErrors #lowest error is with threshold = .6
 PCA_20_v_NeuralNetMisClassRate = NNErrors[order(NNErrors)[1]]
+Avg_FP_PCA20NN = NN_FPs[order(NNErrors)[1]]
+Avg_FN_PCA20NN = NN_FNs[order(NNErrors)[1]]
 plot(
   x = 1:10 / 10,
   y = NNErrors,
@@ -738,8 +869,8 @@ plot(
 )
 lines(x = 1:10 / 10, y = NNErrors)
 ```
-As expected, this version has the lowest misclassification rate of `r round(PCA_20_v_NeuralNetMisClassRate*100,2)`%, which is `r round((PCA_13_v_NeuralNetMisClassRate-PCA_20_v_NeuralNetMisClassRate)*100,2)`% lower than the 13 variable PCA NN, and `r round((NeuralNetMisClassRate-PCA_20_v_NeuralNetMisClassRate)*100,2)`% lower than the original neural network. As you can see, however, we are reaching a point of diminishing returns; adding ~15% more variation only decreased the error rate by 
-`r round((PCA_13_v_NeuralNetMisClassRate-PCA_20_v_NeuralNetMisClassRate)*100,2)`%
+As expected, this version has the lowest misclassification rate of `r round(PCA_20_v_NeuralNetMisClassRate*100,2)`%, which is `r round((PCA_15_v_NeuralNetMisClassRate-PCA_20_v_NeuralNetMisClassRate)*100,2)`% lower than the 13 variable PCA NN, and `r round((NeuralNetMisClassRate-PCA_20_v_NeuralNetMisClassRate)*100,2)`% lower than the original neural network. As you can see, however, we are reaching a point of diminishing returns; adding ~15% more variation only decreased the error rate by 
+`r round((PCA_15_v_NeuralNetMisClassRate-PCA_20_v_NeuralNetMisClassRate)*100,2)`%
     
 ### 3.2.4) K-Nearest Neighbours
   
@@ -748,10 +879,14 @@ kNN works by computing the euclidean distances of the test features to training 
 ```{r}
 numKs = 10
 k_errors = rep(0, numKs)
+k_FPs = rep(0,numKs)
+k_FNs = rep(0,numKs)
 for (ki in 1:numKs) {
   #tune k parameter
-  avgErrors_fold = rep(0, 5)
-  for (fold in 1:5) {
+  avgErrors_fold = CreateErrorMatrix(NumFolds)
+  avgFP_fold = CreateErrorMatrix(NumFolds)
+  avgFN_fold = CreateErrorMatrix(NumFolds)
+  for (fold in 1:NumFolds) {
     #k-fold cross validation
     set.seed(fold)
     #make normalized training and testing sets
@@ -772,23 +907,34 @@ for (ki in 1:numKs) {
     testingfeatures = subset(testingSet.norm, select = c(-koi_disposition))
     testinglabels = testingSet.norm$koi_disposition
     
+    
     #fit model and predict
     predictedLabels = knn(trainingfeatures, testingfeatures, traininglabels, k =
                             ki)
     #determine error
     error = sum(predictedLabels != testingSet.norm$koi_disposition)
-    
+    Errors = AllErrors(testingSet.norm$koi_disposition,
+                       predictedLabels,
+                       sizeTestSet,
+                       1)
     misclassification_rate = error / sizeTestSet
-    avgErrors_fold[fold] = misclassification_rate
+    avgErrors_fold[fold] = Errors[[1]]
+    avgFP_fold[fold] = Errors[[2]]
+    avgFN_fold[fold] = Errors[[3]]
+    
   }
   
   k_errors[ki] = mean(avgErrors_fold)
+  k_FPs[ki] = mean(avgFP_fold)
+  k_FNs[ki] = mean(avgFN_fold)
 }
 print(order(k_errors))
 #The lowest average error (this run) is from the model with k = 4.
 AvgError_best_knn = k_errors[order(k_errors)[1]]
+AvgFP_knn = k_FPs[order(k_errors)[1]]
+AvgFN_knn = k_FNs[order(k_errors)[1]]
 ```
-KNN produces an error of `r round(AvgError_best_knn*100,2)`%, with an optimal k-value of 4
+KNN produces an error of `r round(AvgError_best_knn*100,2)`%, with an optimal k-value of `r order(k_errors)[1]`
 
 
 ### 3.2.5) K-Means Clustering
@@ -797,7 +943,7 @@ Clustering is an unsupervised model which uses randomly generated centroids and 
 Since our data set was labelled, the supervised models will likely yield a better misclassification rate than k-Means clustering. We include clustering in case the algorithm found unforeseen relationships in the unlabelled data features.
 
 ```{r}
-#scale full data set. 
+#scale full data set.
 set.seed(123)
 scaled_data = data.frame(scale(labeled_final[, 2:36]))
 scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 2, 1)
@@ -809,13 +955,30 @@ kclustering = kmeans(features, centers = 2, nstart = 25)
 fviz_cluster(kclustering, data = features)
 error = sum(scaled_data$koi_disposition != kclustering$cluster)
 misclassification_rate = error / dim(scaled_data)[1]
+
+
+isWrong = (scaled_data$koi_disposition != kclustering$cluster)
+isRight = (scaled_data$koi_disposition == kclustering$cluster)
+IsC = (kclustering$cluster == 2)
+IsF = (kclustering$cluster == 1)
+FalsePositives = sum(isWrong & IsC)
+FalseNegatives = sum(isWrong & IsF)
+TruePositives = sum(isRight & IsC)
+TrueNegatives = sum(isRight & IsF)
+Clustering_FP_Rate = (FalsePositives / (FalsePositives + TrueNegatives))#define FP rate as FP/(FP+TN)
+Clustering_FN_Rate = (FalseNegatives / (FalseNegatives + TruePositives))#define FN rate as FN/(FN+TP)
+
+
 AvgErrorClustering = misclassification_rate
 if (AvgErrorClustering > .5) {
   AvgErrorClustering = 1 - AvgErrorClustering#since clustering does not know which cluster is CONFIRMED and which is FALSE POSITIVE, they can be flipped
+  Clustering_FP_Rate = 1 - Clustering_FP_Rate
+  Clustering_FN_Rate = 1 - Clustering_FN_Rate
+  
 }
 
 ```
-Unsurprisingly, clustering has the largest error, of `r round(AvgErrorClustering*100,2)`%; given this is an unsupervised method and our data has labels. 
+Unsurprisingly, clustering has the largest error, of `r round(AvgErrorClustering*100,2)`%; given this is an unsupervised method and our data has labels. Additionally, Clustering is especially terrible at predicting "FALSE POSITIVEs," with a false negative rate of `r round(Clustering_FN_Rate*100,2)`%
 
 # 4) Select Best Model
 
@@ -829,7 +992,7 @@ error_output = data.frame(
     "Neural Net",
     "KNN",
     "Clustering",
-    "PCA 13 Var NN",
+    "PCA 15 Var NN",
     "PCA 20 Var NN",
     "XGBoost"
   ),
@@ -841,14 +1004,36 @@ error_output = data.frame(
     NeuralNetMisClassRate,
     AvgError_best_knn,
     AvgErrorClustering,
-    PCA_13_v_NeuralNetMisClassRate,
+    PCA_15_v_NeuralNetMisClassRate,
     PCA_20_v_NeuralNetMisClassRate,
     AvgErrorXGB
+  ), "False Positive Rate" = c(
+    AvgFP_DT,
+    AvgFP_GLM,
+    AvgFP_RF,
+    AvgFP_SVM,
+    AvgFP_NN,
+    AvgFP_knn,
+    Clustering_FP_Rate,
+    Avg_FP_PCA15NN,
+    Avg_FP_PCA20NN,
+    AvgFP_XGB
+  ), "False Negative Rate" = c(
+    AvgFN_DT,
+    AvgFN_GLM,
+    AvgFN_RF,
+    AvgFN_SVM,
+    AvgFN_NN,
+    AvgFN_knn,
+    Clustering_FN_Rate,
+    Avg_FN_PCA15NN,
+    Avg_FN_PCA20NN,
+    AvgFN_XGB
   )
 )
 print(error_output)
 ```
-XGBoost has the lowest misclassification rate. We will remake this model using the full dataset.
+XGBoost has the lowest misclassification rate; although it has a slightly higher False Positive rate than some other moddles, it still illustrates the best overall accuracy. We will remake this model using the full dataset.
 
 
 #5 Make predictions
