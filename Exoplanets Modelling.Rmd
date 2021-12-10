@@ -211,6 +211,24 @@ When running the various models, our group incorporated K-fold cross-validation.
 
 ## 3.1) Models using non-scaled data:
 
+We first wanted to create a "baseline" model - that is, a model that predicts the average proportions of our training set every time. This will give a baseline misclassification rate that we are trying to beat. 
+
+```{r}
+set.seed(123)
+num_samples = dim(labeled_final)[1]
+sampling.rate = 0.8
+training = sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet = subset(labeled_final[training,])
+testing = setdiff(1:num_samples, training)
+testingSet = subset(labeled_final[testing, ])
+sizeTrainingSet = dim(trainingSet)[1]
+sizeTestingSeet = dim(testingSet)[1]
+propC = sum(trainingSet[, 1] == "CONFIRMED") / sizeTrainingSet #the proportion of the training set that is confirmed
+print(propC)
+sample(c("CONFIRMED","FALSE POSITIVE"), sizeTestingSet,replace = TRUE, prob = c(propC,1-propC))
+```
+
+
 ### 3.1.1) Decision Tree, Random Forest, and SVM
         
 The goal of a decision tree is to make splitting decisions on the data, in an effort to minimize the least squares, thus creating a tree-like structure. These models are useful as a starting point because they are easy to interpret as the plot can display which variables have the highest importance in the tree. Normalization and other data cleaning is also not required for this model.  Adding more depth to the tree can reduce the fitting error to the data, but it can lead to overfitting the model. As a result, the complexity parameter, cp, must be tuned to ensure that the optimal depth-to-fit of the model is used. As the cp value decreases, so does the relative error in the model. We automatically prune our decision tree to select the cp where the change in error is less than 0.05; this is our first example of parameter tuning. 
@@ -313,8 +331,10 @@ for (fold in 1:NumFolds) {
   decTree_FP[fold] = decTreeModel_errors[[2]]
   decTree_FN[fold] = decTreeModel_errors[[3]]
   #Random Forest
-  RandForestModel = randomForest(koi_disposition ~ ., data = trainingSet, ntrees = 200)#visual inspection gives this as a good number for trees
+  RandForestModel = randomForest(koi_disposition ~ ., data = trainingSet, ntrees = 200, importance = TRUE)#visual inspection gives this as a good number for trees
   
+  
+
   predictedLabels = predict(RandForestModel, testingSet)
   
   #Determine Random Forest Error
@@ -340,6 +360,12 @@ for (fold in 1:NumFolds) {
   SVM_error_FP[fold] = SVM_Errors[[2]]
   SVM_error_FN[fold] = SVM_Errors[[3]]
 }
+#Show varimp plot and error plot of 1, example random forest
+
+plot(RandForestModel) #the error stabilizes around 200 trees; this is why this is the number we chose to use
+legend("top", colnames(RandForestModel$err.rate), fill = 1:3)
+varImpPlot(RandForestModel, type = 1, n.var = 20) #This shows that, for random forest, the most important variables are prad and the errors on duration. This shows that the importance of errors is actually quite high, which is not what would be intuitively expected. To better triage variable importance in models that cannot use all of the variables for computational reasons, (Neural Networks), we will therefore use PCA to reduce dimensionality
+
 #Take average of errors from each fold to determine average error for each model
 
 AvgErrorDT = mean(decTree_Error)
