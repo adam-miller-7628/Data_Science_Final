@@ -8,7 +8,9 @@ output: html_notebook
 For this project, we decided to perform classification on our data set. Classification is a way to predict a label, in our case categorical, based on the characteristics of the data. The
 
 
-The objective of our project is to use machine learning classification models to determine if a given observation of a star should be classified as an exoplanet (a planet outside our solar system). The original data set comes from the [Kepler Space Observatory](https://www.kaggle.com/nasa/kepler-exoplanet-search-results), and details 9,564  observations of potential exoplanets, along with 50 descriptive features ranging from identifiers to specific measurements. The column “koi_disposition” labelled each of the potential exoplanets as either “CONFIRMED,” “FALSE POSITIVE," or "CANDIDATE". Those labeled "CANDIDATE" have not yet been determined to be exoplanets or not; the goal of our analysis will be to label them as "CONFIRMED" or "FALSE POSITIVE." NOTE: In this context, "false positive" does not indicate a false positive output from our model. Instead, it refers to the original observation, which was considered a candidate, to have been falsely identified as a candidate.
+The objective of our project is to use machine learning classification models to determine if a given observation of a star should be classified as an exoplanet (a planet outside our solar system). The original data set comes from the [Kepler Space Observatory](https://www.kaggle.com/nasa/kepler-exoplanet-search-results), and details 9,564  observations of potential exoplanets, along with 50 descriptive features ranging from identifiers to specific measurements. The column “koi_disposition” labelled each of the potential exoplanets as either “CONFIRMED,” “FALSE POSITIVE," or "CANDIDATE". Those labeled "CANDIDATE" have not yet been determined to be exoplanets or not; the goal of our analysis will be to label them as "CONFIRMED" or "FALSE POSITIVE." 
+
+NOTE: In this context, "false positive" does not indicate a false positive output from our model. Instead, it refers to the original observation, which was considered a candidate, to have been falsely identified as a candidate. A koi_disposition of "FALSE POSITIVE" indicates that the candidate is not a planet; it is a negative result. 
 
 To solve this problem, we will carry out the following process:
 
@@ -222,12 +224,21 @@ trainingSet = subset(labeled_final[training,])
 testing = setdiff(1:num_samples, training)
 testingSet = subset(labeled_final[testing, ])
 sizeTrainingSet = dim(trainingSet)[1]
-sizeTestingSeet = dim(testingSet)[1]
+sizeTestingSet = dim(testingSet)[1]
 propC = sum(trainingSet[, 1] == "CONFIRMED") / sizeTrainingSet #the proportion of the training set that is confirmed
-print(propC)
-sample(c("CONFIRMED","FALSE POSITIVE"), sizeTestingSet,replace = TRUE, prob = c(propC,1-propC))
-```
+naivePredictions = sample(
+  c("CONFIRMED", "FALSE POSITIVE"),
+  sizeTestingSet,
+  replace = TRUE,
+  prob = c(propC, 1 - propC)
+) #predict taking a random sample, with the same proportions as the training set
 
+
+Errors = sum(testingSet$koi_disposition != naivePredictions)
+ErrorRateNaive = Errors / sizeTestSet
+paste("Naive Error Rate: ", round(ErrorRateNaive * 100, 2), "%", sep = "")
+```
+This "naive" method, which makes predictions based purely off proportions and chance, gives an error rate of `r round(ErrorRateNaive * 100, 2)`%. This is the "number to beat" for the rest of our models.
 
 ### 3.1.1) Decision Tree, Random Forest, and SVM
         
@@ -710,13 +721,16 @@ Principal Component Analysis allows us to reduce dimensionality while capturing 
 ```{r}
 res.pca.exoplanets = prcomp(identifiers_removed[2:36], center = TRUE, scale = TRUE) #perform PCA
 summary(res.pca.exoplanets)
+fviz_eig(res.pca.exoplanets)
+fviz_pca_var(res.pca.exoplanets, col.var = "contrib")
 PoV <-
   res.pca.exoplanets$sdev ^ 2 / sum(res.pca.exoplanets$sdev ^ 2) #get proportions of variance
 numPcas = 15
 sum(PoV[1:numPcas]) #This gives us 88% explanation of variance. This is the number of variable in the original neural network, so we are using this to get a better NN with the same number of variables
 newDataSet = data.frame(res.pca.exoplanets$x[, 1:numPcas])
 newDataSet$label = identifiers_removed$koi_disposition
-fviz_pca_var(res.pca.exoplanets, col.var = "contrib")
+
+
 candidates_PCA = newDataSet[identifiers_removed$koi_disposition ==
                               "CANDIDATE", ] #separate out just the candidates
 labeled_PCA = newDataSet[identifiers_removed$koi_disposition !=
@@ -724,6 +738,8 @@ labeled_PCA = newDataSet[identifiers_removed$koi_disposition !=
 labeled_PCA = droplevels(labeled_PCA)
 candidates_PCA = droplevels(candidates_PCA)
 ```
+While our PCA does not show any one dimension to account for an overwhelming amount of variance, it does clearly indicate that a significant portion of variance can be explained using significantly fewer that 36 principal components. 
+
 Rerunning Neural Network Model
 ```{r}
 set.seed(123)
@@ -976,7 +992,7 @@ scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED
 num_samples = dim(scaled_data)[1]
 features = subset(scaled_data, select = c(-koi_disposition))
 #fit the model
-kclustering = kmeans(features, centers = 2, nstart = 25)
+kclustering = kmeans(features, centers = 2, nstart = 25)#we used two clusters, one for CONFIRMED, and one for FALSE POSITIVE. We will then attempt to match clusters to classifications; there are two potential configurations (1 = confirmed and 2 = confirmed); which ever one results in a misclassification rate of less than 50% will be the accepted configuration. 
 #visualize the clusters
 fviz_cluster(kclustering, data = features)
 error = sum(scaled_data$koi_disposition != kclustering$cluster)
@@ -1002,9 +1018,56 @@ if (AvgErrorClustering > .5) {
   Clustering_FN_Rate = 1 - Clustering_FN_Rate
   
 }
+summary(factor(kclustering$cluster))
+```
+Unsurprisingly, clustering has the largest error, of `r round(AvgErrorClustering*100,2)`%; given this is an unsupervised method and our data has labels. Clustering seems to have put nearly all values in category "2," which has resulted in a misclassification rate that is roughly the same as the proportions of CONFIRMED and FALSE POSITIVES in the original data set. The fact that clustering is almost only predicting one value can be seen in its terrible false negative rate of `r round(Clustering_FN_Rate*100,2)`%. One hypothesis for why this might be is because there are certain values that are different enough from the rest of the data set that they are not clearly negative or positive results, and these are being clustered together. To test this, I will try again with 3 centers. 
+
+
+```{r}
+#scale full data set.
+set.seed(123)
+scaled_data = data.frame(scale(labeled_final[, 2:36]))
+scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 2, 1)
+num_samples = dim(scaled_data)[1]
+features = subset(scaled_data, select = c(-koi_disposition))
+#fit the model
+kclustering = kmeans(features, centers = 3, nstart = 25)#we used two clusters, one for CONFIRMED, and one for FALSE POSITIVE. We will then attempt to match clusters to classifications; there are two potential configurations (1 = confirmed and 2 = confirmed); which ever one results in a misclassification rate of less than 50% will be the accepted configuration. 
+#visualize the clusters
+fviz_cluster(kclustering, data = features)
+summary(factor(kclustering$cluster))
+
 
 ```
-Unsurprisingly, clustering has the largest error, of `r round(AvgErrorClustering*100,2)`%; given this is an unsupervised method and our data has labels. Additionally, Clustering is especially terrible at predicting "FALSE POSITIVEs," with a false negative rate of `r round(Clustering_FN_Rate*100,2)`%
+With three clusters, we are still getting category 2 with very few values, but have more robust categories 1 and 3. I will therefore labeled category 2 "inconclusive" and get a misclassification rate using categories 1 and 3.
+
+```{r}
+scaled_data$koi_disposition = ifelse(labeled_final$koi_disposition == "CONFIRMED", 3, 1)
+error = sum(scaled_data$koi_disposition != kclustering$cluster)
+misclassification_rate = error / dim(scaled_data)[1]
+isWrong = (scaled_data$koi_disposition != kclustering$cluster)
+isRight = (scaled_data$koi_disposition == kclustering$cluster)
+IsC = (kclustering$cluster == 3)
+IsF = (kclustering$cluster == 1)
+FalsePositives = sum(isWrong & IsC)
+FalseNegatives = sum(isWrong & IsF)
+TruePositives = sum(isRight & IsC)
+TrueNegatives = sum(isRight & IsF)
+Clustering_FP_2_Rate = (FalsePositives / (FalsePositives + TrueNegatives))#define FP rate as FP/(FP+TN)
+Clustering_FN_2_Rate = (FalseNegatives / (FalseNegatives + TruePositives))#define FN rate as FN/(FN+TP)
+
+AvgErrorClustering_2 = misclassification_rate
+if (AvgErrorClustering_2 > .5) {
+  AvgErrorClustering_2 = 1 - AvgErrorClustering_2#since clustering does not know which cluster is CONFIRMED and which is FALSE POSITIVE, they can be flipped
+  Clustering_FP_2_Rate = 1 - Clustering_FP_2_Rate
+  Clustering_FN_2_Rate = 1 - Clustering_FN_2_Rate
+  
+}
+
+paste("Clustering 2 Error Rate: ", round(AvgErrorClustering_2*100,2),"%",sep = "")
+```
+
+This produces an error rate barely better than that of the naive model, but with more sensible false positive/false negative rates of `r round(100*Clustering_FP_2_Rate,2)`% and `r round(100*Clustering_FN_2_Rate,2)`%. Although this is not better than any of our other models, it illustrates an interesting application of unsupervised learning to find categories that might not be immediately apparent in the labeled data. 
+
 
 # 4) Select Best Model
 
@@ -1029,7 +1092,7 @@ error_output = data.frame(
     AvgErrorSVM,
     NeuralNetMisClassRate,
     AvgError_best_knn,
-    AvgErrorClustering,
+    AvgErrorClustering_2,
     PCA_15_v_NeuralNetMisClassRate,
     PCA_20_v_NeuralNetMisClassRate,
     AvgErrorXGB
@@ -1040,7 +1103,7 @@ error_output = data.frame(
     AvgFP_SVM,
     AvgFP_NN,
     AvgFP_knn,
-    Clustering_FP_Rate,
+    Clustering_FP_2_Rate,
     Avg_FP_PCA15NN,
     Avg_FP_PCA20NN,
     AvgFP_XGB
@@ -1051,7 +1114,7 @@ error_output = data.frame(
     AvgFN_SVM,
     AvgFN_NN,
     AvgFN_knn,
-    Clustering_FN_Rate,
+    Clustering_FN_2_Rate,
     Avg_FN_PCA15NN,
     Avg_FN_PCA20NN,
     AvgFN_XGB
@@ -1059,7 +1122,7 @@ error_output = data.frame(
 )
 print(error_output)
 ```
-XGBoost has the lowest misclassification rate; although it has a slightly higher False Positive rate than some other moddles, it still illustrates the best overall accuracy. We will remake this model using the full dataset.
+All models beat the naive misclassification rate of `r round(ErrorRateNaive*100,2)`%, with all except clustering beating it by a significant margin. XGBoost has the lowest misclassification rate; although it has a slightly higher False Positive rate than some other model, it still has the best overall accuracy. We will remake this model using the full dataset.
 
 
 #5 Make predictions
@@ -1093,7 +1156,14 @@ predictedLabels = ifelse(BoostPredictionsRounded == 1, "FALSE POSITIVE", "CONFIR
 candidates_final$koi_disposition = predictedLabels
 head(candidates_final)
 write.csv(candidates_final, "labeledCandidates.csv")
-```
 
+numConfirmed = sum(candidates_final[,1]=="CONFIRMED")
+numFalse = sum(candidates_final[,1]=="FALSE POSITIVE")
+Proportions = data.frame(label = c("CONFIRMED","FALSE POSITIVE"), number = c(numConfirmed,numFalse))
+bp = ggplot(Proportions,aes(x = "",y=number,fill=label))+geom_bar(width = 1,stat = "identity")
+pie = bp+coord_polar("y", start = 0) + ggtitle("Proportions of final predictions that are CONFIRMED or FALSE POSITIVE")
+```
+As shown in the pie above, our final model is predicting more non-planets than confirmed planets. Given that our XGBoost model has a higher False Positive than False Negative rate, it is likely that some of these CONFIRMEDs are in fact incorrect, meaning that the there are likely slightly more FALSEs and slightly fewer CONFIRMED than predicted.  
  
+In conclusion, this model can be used the identify new planets in the future. Given more computational resources, the candidate models for neural networks would likely be able to be parameter tuned more, and run with more input variables. Given our limited computational power, however, we believe this to be a strong model for predicting whether a given stellar observation is an exoplanet. 
  
